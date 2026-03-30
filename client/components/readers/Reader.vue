@@ -223,6 +223,40 @@
             {{ ctx.label }}
           </button>
         </div>
+        <!-- Range selector -->
+        <div v-if="chatContext === 'range' && rangeChapters.length" class="mt-2 space-y-1">
+          <!-- Visual bar with chapter markers -->
+          <div class="relative h-6 bg-gray-700/30 rounded overflow-hidden cursor-pointer" @mousedown="onRangeBarClick">
+            <div v-for="(ch, i) in rangeChapters" :key="i"
+              class="absolute top-0 h-full border-l border-gray-500/30"
+              :style="{ left: (ch.pct * 100) + '%' }"
+              :title="ch.title">
+            </div>
+            <!-- Selected range highlight -->
+            <div class="absolute top-0 h-full bg-blue-500/30"
+              :style="{ left: (rangeStart) + '%', width: (rangeEnd - rangeStart) + '%' }">
+            </div>
+          </div>
+          <!-- Dual range sliders -->
+          <div class="flex items-center gap-2">
+            <input type="range" v-model.number="rangeStart" :min="0" :max="100" :step="1"
+              class="flex-1 h-1 accent-blue-500" @input="onRangeChange" />
+            <span class="text-xs opacity-60 w-10 text-center">{{ rangeStart }}%</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="range" v-model.number="rangeEnd" :min="0" :max="100" :step="1"
+              class="flex-1 h-1 accent-blue-500" @input="onRangeChange" />
+            <span class="text-xs opacity-60 w-10 text-center">{{ rangeEnd }}%</span>
+          </div>
+          <!-- Token budget indicator -->
+          <div v-if="tokenBudgetPct != null" class="flex items-center gap-2">
+            <div class="flex-1 h-1.5 bg-gray-700/30 rounded overflow-hidden">
+              <div class="h-full rounded transition-all" :class="tokenBudgetPct > 90 ? 'bg-red-500' : tokenBudgetPct > 70 ? 'bg-yellow-500' : 'bg-green-500'"
+                :style="{ width: Math.min(tokenBudgetPct, 100) + '%' }"></div>
+            </div>
+            <span class="text-xs opacity-40">{{ tokenBudgetPct > 100 ? 'Over budget' : tokenBudgetPct + '% ctx' }}</span>
+          </div>
+        </div>
         <div v-if="chatContextPreview" class="text-xs opacity-40 truncate">{{ chatContextPreview }}</div>
       </div>
 
@@ -235,8 +269,7 @@
             </div>
           </div>
           <div v-else class="flex justify-start">
-            <div class="bg-gray-600/20 rounded-lg px-3 py-2 max-w-[85%]">
-              <p class="whitespace-pre-wrap">{{ msg.content }}</p>
+            <div class="bg-gray-600/20 rounded-lg px-3 py-2 max-w-[85%] chat-markdown" v-html="renderMarkdown(msg.content)">
             </div>
           </div>
         </div>
@@ -291,6 +324,11 @@ export default {
       chatModel: '',
       chatContext: 'page',
       ollamaModels: [],
+      modelContextLength: null,
+      rangeStart: 0,
+      rangeEnd: 10,
+      rangeChapters: [],
+      rangePreviewLength: 0,
       ereaderSettings: {
         theme: 'dark',
         font: 'serif',
@@ -309,6 +347,12 @@ export default {
       if (newVal) {
         this.init()
       }
+    },
+    chatModel() {
+      this.loadModelInfo()
+    },
+    chatContext(val) {
+      if (val === 'range') this.loadRangeChapters()
     }
   },
   computed: {
@@ -328,13 +372,30 @@ export default {
       return [
         { label: 'Page', value: 'page' },
         { label: 'Chapter', value: 'chapter' },
-        { label: 'Selection', value: 'selection' }
+        { label: 'Selection', value: 'selection' },
+        { label: 'Range', value: 'range' }
       ]
+    },
+    estimatedTokens() {
+      return Math.round(this.rangePreviewLength / 4)
+    },
+    tokenBudgetPct() {
+      if (!this.modelContextLength) return null
+      // Reserve ~2k tokens for system prompt + conversation
+      const available = this.modelContextLength - 2000
+      return Math.min(100, Math.round((this.estimatedTokens / available) * 100))
     },
     chatContextPreview() {
       if (this.chatContext === 'page') return 'Sending current visible text'
       if (this.chatContext === 'chapter') return `Sending full chapter: ${this.readingStatus?.chapter || 'unknown'}`
       if (this.chatContext === 'selection') return 'Sending selected text (highlight text first)'
+      if (this.chatContext === 'range') {
+        const tokens = this.estimatedTokens
+        const budget = this.tokenBudgetPct
+        let info = `~${tokens.toLocaleString()} tokens`
+        if (budget != null) info += ` (${budget}% of context window)`
+        return info
+      }
       return ''
     },
     isCurrentPageBookmarked() {
@@ -549,14 +610,70 @@ export default {
         const resp = await this.$axios.$get('/api/ollama/tags')
         this.ollamaModels = (resp.models || []).map(m => m.name)
         if (this.ollamaModels.length && !this.chatModel) {
-          // Restore saved model or pick first
           const saved = localStorage.getItem('ebookChatModel')
           this.chatModel = saved && this.ollamaModels.includes(saved) ? saved : this.ollamaModels[0]
         }
+        if (this.chatModel) this.loadModelInfo()
       } catch (e) {
         console.error('Failed to load Ollama models:', e)
         this.ollamaModels = []
       }
+    },
+    async loadModelInfo() {
+      if (!this.chatModel) return
+      try {
+        const resp = await this.$axios.$post('/api/ollama/show', { model: this.chatModel })
+        this.modelContextLength = resp.model_info?.['llama.context_length']
+          || resp.model_info?.['context_length']
+          || null
+      } catch (e) {
+        this.modelContextLength = null
+      }
+    },
+    loadRangeChapters() {
+      const reader = this.$refs.readerComponent
+      if (!reader?.chapters?.length) return
+      this.rangeChapters = reader.chapters.map(ch => ({
+        title: ch.title,
+        pct: ch.start || 0
+      }))
+      // Set range end to current reading position
+      if (this.readingStatus?.percentage) {
+        this.rangeEnd = Math.round(this.readingStatus.percentage * 100)
+      }
+      this.onRangeChange()
+    },
+    async onRangeChange() {
+      // Clamp
+      if (this.rangeStart >= this.rangeEnd) this.rangeStart = Math.max(0, this.rangeEnd - 1)
+      // Estimate text length for the selected range
+      const reader = this.$refs.readerComponent
+      if (!reader?.book) return
+      const spine = reader.book.spine
+      if (!spine) return
+      // Rough estimate: total spine items, figure out which fall in range
+      let totalChars = 0
+      const startPct = this.rangeStart / 100
+      const endPct = this.rangeEnd / 100
+      const totalItems = spine.items?.length || spine.length || 0
+      const startIdx = Math.floor(startPct * totalItems)
+      const endIdx = Math.ceil(endPct * totalItems)
+      // Estimate ~3000 chars per spine item on average
+      totalChars = (endIdx - startIdx) * 3000
+      this.rangePreviewLength = totalChars
+    },
+    onRangeBarClick(e) {
+      const rect = e.target.getBoundingClientRect()
+      const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100)
+      // Move whichever handle is closer
+      const distStart = Math.abs(pct - this.rangeStart)
+      const distEnd = Math.abs(pct - this.rangeEnd)
+      if (distStart < distEnd) {
+        this.rangeStart = pct
+      } else {
+        this.rangeEnd = pct
+      }
+      this.onRangeChange()
     },
     loadChatHistory() {
       const itemId = this.selectedLibraryItem?.id
@@ -659,7 +776,6 @@ export default {
       }
 
       if (this.chatContext === 'chapter') {
-        // Load the current chapter's full text
         try {
           const currentSection = reader.rendition?.location?.start?.href
           if (!currentSection) return ''
@@ -668,14 +784,88 @@ export default {
           await item.load(reader.book.load.bind(reader.book))
           const text = item.document?.body?.innerText || item.document?.body?.textContent || ''
           item.unload()
-          return text.trim().slice(0, 30000)
+          return this.fitToContext(text.trim())
         } catch (e) {
           console.error('Failed to load chapter text:', e)
           return ''
         }
       }
 
+      if (this.chatContext === 'range') {
+        try {
+          const spine = reader.book.spine
+          const totalItems = spine.items?.length || spine.length || 0
+          const startIdx = Math.floor((this.rangeStart / 100) * totalItems)
+          const endIdx = Math.ceil((this.rangeEnd / 100) * totalItems)
+          const texts = []
+          for (let i = startIdx; i < endIdx && i < totalItems; i++) {
+            const item = spine.get(i)
+            if (!item) continue
+            await item.load(reader.book.load.bind(reader.book))
+            const text = item.document?.body?.innerText || item.document?.body?.textContent || ''
+            item.unload()
+            if (text.trim()) texts.push(text.trim())
+          }
+          return this.fitToContext(texts.join('\n\n---\n\n'))
+        } catch (e) {
+          console.error('Failed to load range text:', e)
+          return ''
+        }
+      }
+
       return ''
+    },
+    renderMarkdown(text) {
+      if (!text) return ''
+      let html = text
+        // Escape HTML
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      // Code blocks
+      html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+      // Inline code
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
+      // Tables
+      html = html.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)*)/gm, (match, header, sep, body) => {
+        const headers = header.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('')
+        const rows = body.trim().split('\n').map(row => {
+          const cells = row.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('')
+          return `<tr>${cells}</tr>`
+        }).join('')
+        return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`
+      })
+      // Headers
+      html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>')
+      html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>')
+      html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>')
+      // Bold + italic
+      html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
+      // Unordered lists
+      html = html.replace(/^[*\-] (.+)$/gm, '<li>$1</li>')
+      html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
+      // Numbered lists
+      html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+      // Horizontal rules
+      html = html.replace(/^---+$/gm, '<hr>')
+      // Paragraphs (double newlines)
+      html = html.replace(/\n\n+/g, '</p><p>')
+      // Single newlines to <br> (outside of pre/table)
+      html = html.replace(/\n/g, '<br>')
+      return `<p>${html}</p>`
+    },
+    fitToContext(text) {
+      if (!text) return ''
+      // Estimate max chars from model context window
+      // Reserve ~2k tokens for system prompt + conversation, 1 token ≈ 4 chars
+      const maxTokens = this.modelContextLength ? this.modelContextLength - 2000 : 30000
+      const maxChars = maxTokens * 4
+      if (text.length <= maxChars) return text
+      // Truncate from the end, keeping a note
+      const truncated = text.slice(0, maxChars)
+      const lastPara = truncated.lastIndexOf('\n')
+      const clean = lastPara > maxChars * 0.8 ? truncated.slice(0, lastPara) : truncated
+      return clean + '\n\n[Text truncated to fit model context window]'
     },
     scrollChatToBottom() {
       this.$nextTick(() => {
@@ -818,5 +1008,61 @@ export default {
   #reader.reader-player-open {
     height: 100%;
   }
+}
+.chat-markdown h2, .chat-markdown h3, .chat-markdown h4 {
+  font-weight: 600;
+  margin: 0.75em 0 0.25em;
+}
+.chat-markdown h2 { font-size: 1.1em; }
+.chat-markdown h3 { font-size: 1em; }
+.chat-markdown h4 { font-size: 0.95em; }
+.chat-markdown strong { font-weight: 600; }
+.chat-markdown em { font-style: italic; }
+.chat-markdown code {
+  background: rgba(255,255,255,0.08);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.chat-markdown pre {
+  background: rgba(0,0,0,0.3);
+  padding: 0.5em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.chat-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.chat-markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.85em;
+  width: 100%;
+}
+.chat-markdown th, .chat-markdown td {
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 0.3em 0.5em;
+  text-align: left;
+}
+.chat-markdown th {
+  font-weight: 600;
+  background: rgba(255,255,255,0.05);
+}
+.chat-markdown ul, .chat-markdown ol {
+  padding-left: 1.5em;
+  margin: 0.3em 0;
+}
+.chat-markdown li {
+  margin: 0.15em 0;
+}
+.chat-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  margin: 0.5em 0;
+}
+.chat-markdown p {
+  margin: 0.3em 0;
 }
 </style>

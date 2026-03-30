@@ -329,6 +329,14 @@ class Server {
         res.status(502).json({ error: 'Ollama not reachable' })
       }
     })
+    router.post('/api/ollama/show', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const resp = await axios.post(`${OLLAMA_URL}/api/show`, { model: req.body.model }, { timeout: 10000 })
+        res.json(resp.data)
+      } catch (error) {
+        res.status(502).json({ error: 'Ollama not reachable' })
+      }
+    })
     router.post('/api/ollama/chat', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
       try {
         const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
