@@ -7,6 +7,13 @@
       <button v-if="hasSettings" @click="openSettings" type="button" aria-label="Ereader settings" class="mx-4 inline-flex opacity-80 hover:opacity-100">
         <span class="material-symbols text-1.5xl">settings</span>
       </button>
+      <button v-if="isEpub" @click="toggleBookmarkCurrent" type="button" aria-label="Bookmark this page" class="inline-flex opacity-80 hover:opacity-100">
+        <span class="material-symbols text-1.5xl" :class="isCurrentPageBookmarked ? 'fill text-yellow-400' : ''">bookmark</span>
+      </button>
+      <button v-if="isEpub && ebookBookmarks.length" @click="toggleBookmarksPanel" type="button" aria-label="View bookmarks" class="ml-2 inline-flex opacity-80 hover:opacity-100">
+        <span class="material-symbols text-1.5xl">bookmarks</span>
+        <span class="text-xs ml-0.5 mt-1">{{ ebookBookmarks.length }}</span>
+      </button>
     </div>
 
     <div class="absolute top-4 left-1/2 transform -translate-x-1/2">
@@ -23,7 +30,7 @@
       </button>
     </div>
 
-    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" />
+    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" />
 
     <!-- Reading status bar -->
     <div v-if="readingStatus && isEpub" class="absolute bottom-0 left-0 w-full z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" :class="ereaderTheme === 'dark' ? 'bg-primary/90 text-gray-400' : ereaderTheme === 'sepia' ? 'bg-[rgb(230,222,202)]/90 text-[#5b4636]/70' : 'bg-white/90 text-gray-500'">
@@ -31,9 +38,11 @@
         <div class="h-full bg-blue-500/60 transition-all duration-300" :style="{ width: Math.round(readingStatus.percentage * 100) + '%' }"></div>
       </div>
       <div class="flex items-center justify-between px-4 py-1.5 text-xs">
-        <span v-if="readingStatus.chapter" class="truncate max-w-[50%]">{{ readingStatus.chapter }}</span>
+        <span v-if="readingStatus.chapter" class="truncate max-w-[40%]">{{ readingStatus.chapter }}</span>
         <span v-else></span>
         <div class="flex items-center gap-4 shrink-0">
+          <span v-if="readingStatus.sessionMinutes > 0">{{ readingStatus.sessionMinutes }}m this session</span>
+          <span v-if="readingStatus.etaMinutes != null">{{ formatEta(readingStatus.etaMinutes) }} left</span>
           <span>{{ Math.round(readingStatus.percentage * 100) }}%</span>
           <span v-if="readingStatus.totalLocations">Loc {{ readingStatus.location }} / {{ readingStatus.totalLocations }}</span>
         </div>
@@ -82,6 +91,30 @@
               </ul>
             </li>
           </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bookmarks panel (right side) -->
+    <div v-if="bookmarksPanelOpen && isEpub" class="w-80 h-full max-h-full absolute top-0 right-0 shadow-xl z-30 group-data-[theme=dark]:bg-primary group-data-[theme=dark]:text-white group-data-[theme=light]:bg-white group-data-[theme=light]:text-black group-data-[theme=sepia]:bg-[rgb(244,236,216)] group-data-[theme=sepia]:text-[#5b4636]">
+      <div class="flex flex-col p-4 h-full">
+        <div class="flex items-center mb-3">
+          <button @click="toggleBookmarksPanel" type="button" class="inline-flex opacity-80 hover:opacity-100">
+            <span class="material-symbols text-2xl">close</span>
+          </button>
+          <p class="text-lg font-semibold ml-2">Bookmarks</p>
+        </div>
+        <div v-if="!ebookBookmarks.length" class="text-sm opacity-60 py-4 text-center">No bookmarks yet</div>
+        <div class="overflow-y-auto flex-1">
+          <div v-for="(bm, idx) in ebookBookmarks" :key="idx" class="flex items-start justify-between py-2 border-b border-gray-700/30 cursor-pointer hover:opacity-80" @click="goToBookmark(bm.cfi)">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm truncate">{{ bm.label }}</p>
+              <p class="text-xs opacity-50">{{ Math.round(bm.percentage * 100) }}%</p>
+            </div>
+            <button @click.stop="removeBookmark(bm.cfi)" class="ml-2 opacity-50 hover:opacity-100 shrink-0">
+              <span class="material-symbols text-sm">delete</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -164,6 +197,8 @@ export default {
       tocOpen: false,
       showSettings: false,
       readingStatus: null,
+      ebookBookmarks: [],
+      bookmarksPanelOpen: false,
       ereaderSettings: {
         theme: 'dark',
         font: 'serif',
@@ -196,6 +231,10 @@ export default {
     ereaderTheme() {
       if (this.isEpub) return this.ereaderSettings.theme
       return 'dark'
+    },
+    isCurrentPageBookmarked() {
+      if (!this.readingStatus?.currentCfi || !this.ebookBookmarks.length) return false
+      return this.ebookBookmarks.some(b => b.cfi === this.readingStatus.currentCfi)
     },
     spreadItems() {
       return [
@@ -357,6 +396,35 @@ export default {
     },
     onReadingStatus(status) {
       this.readingStatus = status
+    },
+    onBookmarksUpdated(bookmarks) {
+      this.ebookBookmarks = bookmarks || []
+    },
+    toggleBookmarkCurrent() {
+      if (!this.readingStatus?.currentCfi) return
+      const cfi = this.readingStatus.currentCfi
+      if (this.isCurrentPageBookmarked) {
+        this.$refs.readerComponent?.removeBookmark?.(cfi)
+      } else {
+        this.$refs.readerComponent?.addBookmark?.(cfi)
+      }
+    },
+    toggleBookmarksPanel() {
+      this.bookmarksPanelOpen = !this.bookmarksPanelOpen
+    },
+    goToBookmark(cfi) {
+      this.$refs.readerComponent?.goToBookmark?.(cfi)
+      this.bookmarksPanelOpen = false
+    },
+    removeBookmark(cfi) {
+      this.$refs.readerComponent?.removeBookmark?.(cfi)
+    },
+    formatEta(minutes) {
+      if (minutes == null) return ''
+      if (minutes < 60) return `${minutes}m`
+      const h = Math.floor(minutes / 60)
+      const m = minutes % 60
+      return m > 0 ? `${h}h ${m}m` : `${h}h`
     },
     toggleToC() {
       this.tocOpen = !this.tocOpen

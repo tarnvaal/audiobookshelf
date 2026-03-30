@@ -42,6 +42,11 @@ export default {
       rendition: null,
       initialPositioning: false,
       chapters: [],
+      sessionStartTime: null,
+      sessionStartPct: 0,
+      lastPageTurnTime: null,
+      pageTurns: 0,
+      ebookBookmarks: [],
       ereaderSettings: {
         theme: 'dark',
         font: 'serif',
@@ -206,7 +211,7 @@ export default {
         allowScriptedContent: this.allowScriptedContent,
         spread: isContinuous ? 'none' : (this.ereaderSettings.spread || 'auto'),
         snap: !isContinuous,
-        manager: isContinuous ? 'default' : 'continuous',
+        manager: 'continuous',
         flow: isContinuous ? 'scrolled-doc' : 'paginated'
       })
 
@@ -381,17 +386,38 @@ export default {
     },
     /** @param {string} location - CFI of the new location */
     relocated(location) {
-      // Always emit reading status for the status bar, even during initial positioning
       const pct = location.end?.percentage || 0
       const position = this.book?.locations?.locationFromCfi(location.start.cfi)
       const total = this.book?.locations?.total || 0
-      // chapters use percentage (0-1) as their start value, not location index
       const chapter = this.findChapterFromPosition(this.chapters, pct)
+
+      // Reading stats
+      const now = Date.now()
+      if (!this.sessionStartTime) {
+        this.sessionStartTime = now
+        this.sessionStartPct = pct
+      }
+      if (!this.initialPositioning) {
+        this.pageTurns++
+        this.lastPageTurnTime = now
+      }
+      const sessionMinutes = Math.round((now - this.sessionStartTime) / 60000)
+      const pctRead = pct - this.sessionStartPct
+      const pctRemaining = 1 - pct
+      // Estimate time to finish based on current reading pace
+      let etaMinutes = null
+      if (pctRead > 0.005 && sessionMinutes > 0) {
+        etaMinutes = Math.round(pctRemaining / (pctRead / sessionMinutes))
+      }
+
       this.$emit('reading-status', {
         percentage: pct,
         chapter: chapter?.title || '',
         location: position || 0,
-        totalLocations: total
+        totalLocations: total,
+        sessionMinutes,
+        etaMinutes,
+        currentCfi: location.start.cfi
       })
 
       if (this.initialPositioning) return
@@ -443,7 +469,7 @@ export default {
         allowScriptedContent: this.allowScriptedContent,
         spread: isContinuous ? 'none' : (this.ereaderSettings.spread || 'auto'),
         snap: !isContinuous,
-        manager: isContinuous ? 'default' : 'continuous',
+        manager: 'continuous',
         flow: isContinuous ? 'scrolled-doc' : 'paginated'
       })
 
@@ -566,6 +592,43 @@ export default {
       this.windowHeight = window.innerHeight
       this.rendition?.resize(this.readerWidth, this.readerHeight * 0.8)
     },
+    loadBookmarks() {
+      try {
+        const data = localStorage.getItem(`ebookBookmarks-${this.libraryItemId}`)
+        this.ebookBookmarks = data ? JSON.parse(data) : []
+      } catch (e) {
+        this.ebookBookmarks = []
+      }
+    },
+    saveBookmarks() {
+      localStorage.setItem(`ebookBookmarks-${this.libraryItemId}`, JSON.stringify(this.ebookBookmarks))
+      this.$emit('bookmarks-updated', this.ebookBookmarks)
+    },
+    addBookmark(cfi, label) {
+      if (!cfi) return
+      // Don't duplicate
+      if (this.ebookBookmarks.find(b => b.cfi === cfi)) return
+      const pct = this.book?.locations?.percentageFromCfi(cfi)
+      const chapter = this.findChapterFromPosition(this.chapters, pct)
+      this.ebookBookmarks.push({
+        cfi,
+        percentage: pct,
+        chapter: chapter?.title || '',
+        label: label || `${Math.round((pct || 0) * 100)}% — ${chapter?.title || 'Unknown'}`,
+        created: Date.now()
+      })
+      this.ebookBookmarks.sort((a, b) => (a.percentage || 0) - (b.percentage || 0))
+      this.saveBookmarks()
+    },
+    removeBookmark(cfi) {
+      this.ebookBookmarks = this.ebookBookmarks.filter(b => b.cfi !== cfi)
+      this.saveBookmarks()
+    },
+    goToBookmark(cfi) {
+      if (!this.rendition?.manager) return
+      this.initialPositioning = false
+      this.rendition.display(cfi)
+    },
     applyTheme() {
       if (!this.rendition) return
       this.rendition.getContents().forEach((c) => {
@@ -600,6 +663,8 @@ export default {
     this.windowWidth = window.innerWidth
     this.windowHeight = window.innerHeight
     window.addEventListener('resize', this.resize)
+    this.loadBookmarks()
+    this.$emit('bookmarks-updated', this.ebookBookmarks)
     this.initEpub()
   },
   beforeDestroy() {
