@@ -1,0 +1,26 @@
+diff --git a/node_modules/epubjs/lib/managers/continuous/index.js b/node_modules/epubjs/lib/managers/continuous/index.js
+index abcdef1..1234567 100644
+--- a/node_modules/epubjs/lib/managers/continuous/index.js
++++ b/node_modules/epubjs/lib/managers/continuous/index.js
+@@ -94,7 +94,7 @@
+     }
+
+     if (distX > 0 || distY > 0) {
+-      this.scrollBy(distX, distY, true);
++      this.scrollTo(distX, distY, true);
+     }
+   }
+
+diff --git a/node_modules/epubjs/src/managers/continuous/index.js b/node_modules/epubjs/src/managers/continuous/index.js
+index abcdef2..1234568 100644
+--- a/node_modules/epubjs/src/managers/continuous/index.js
++++ b/node_modules/epubjs/src/managers/continuous/index.js
+@@ -90,7 +90,7 @@
+ 		}
+
+ 		if (distX > 0 || distY > 0) {
+-			this.scrollBy(distX, distY, true);
++			this.scrollTo(distX, distY, true);
+ 		}
+ 	}
+

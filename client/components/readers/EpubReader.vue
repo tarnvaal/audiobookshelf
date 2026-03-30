@@ -40,6 +40,7 @@ export default {
       book: null,
       /** @type {ePub.Rendition} */
       rendition: null,
+      initialPositioning: false,
       chapters: [],
       ereaderSettings: {
         theme: 'dark',
@@ -77,9 +78,22 @@ export default {
     savedEbookLocation() {
       if (!this.keepProgress) return null
       if (!this.userMediaProgress?.ebookLocation) return null
-      // Validate ebookLocation is an epubcfi
-      if (!String(this.userMediaProgress.ebookLocation).startsWith('epubcfi')) return null
-      return this.userMediaProgress.ebookLocation
+      const loc = this.userMediaProgress.ebookLocation
+      // Handle CFI string (from web client)
+      if (typeof loc === 'string' && loc.startsWith('epubcfi')) return loc
+      // Handle JSON location object (from mobile app) — extract href for navigation
+      if (typeof loc === 'string') {
+        try {
+          const parsed = JSON.parse(loc)
+          if (parsed.href) return parsed.href
+        } catch (e) {}
+      }
+      if (typeof loc === 'object' && loc.href) return loc.href
+      return null
+    },
+    savedEbookProgress() {
+      if (!this.keepProgress) return null
+      return this.userMediaProgress?.ebookProgress || null
     },
     localStorageLocationsKey() {
       return `ebookLocations-${this.libraryItemId}`
@@ -147,14 +161,17 @@ export default {
     },
     prev() {
       if (!this.rendition?.manager) return
+      this.initialPositioning = false
       return this.rendition?.prev()
     },
     next() {
       if (!this.rendition?.manager) return
+      this.initialPositioning = false
       return this.rendition?.next()
     },
     goToChapter(href) {
       if (!this.rendition?.manager) return
+      this.initialPositioning = false
       return this.rendition?.display(href)
     },
     /** @returns {object} Returns the chapter that the `position` in the book is in */
@@ -297,6 +314,7 @@ export default {
     },
     /** @param {string} location - CFI of the new location */
     relocated(location) {
+      if (this.initialPositioning) return
       if (this.savedEbookLocation === location.start.cfi) {
         return
       }
@@ -347,15 +365,16 @@ export default {
         flow: 'paginated'
       })
 
-      // load saved progress
-      reader.rendition.display(this.savedEbookLocation || reader.book.locations.start)
+      // Suppress relocated handler until user actually navigates (next/prev)
+      const targetProgress = this.savedEbookProgress
+      if (targetProgress) this.initialPositioning = true
 
       reader.rendition.on('rendered', () => {
         this.applyTheme()
       })
 
       reader.book.ready
-        .then(() => {
+        .then(async () => {
           // set up event listeners
           reader.rendition.on('relocated', reader.relocated)
           reader.rendition.on('keydown', reader.keyUp)
@@ -367,14 +386,24 @@ export default {
             this.$emit('touchend', event)
           })
 
-          // load ebook cfi locations
+          // Load or generate location map first
           const savedLocations = this.loadLocations()
           if (savedLocations) {
             reader.book.locations.load(savedLocations)
           } else {
-            reader.book.locations.generate().then(() => {
-              this.checkSaveLocations(reader.book.locations.save())
-            })
+            await reader.book.locations.generate()
+            this.checkSaveLocations(reader.book.locations.save())
+          }
+
+          // Now navigate: use percentage if available, otherwise use saved location
+          if (targetProgress) {
+            const totalLocations = reader.book.locations.total
+            const targetLoc = Math.ceil(totalLocations * targetProgress)
+            const cfi = reader.book.locations.cfiFromPercentage(targetProgress)
+            console.log(`[EpubReader] Resume: progress=${targetProgress}, totalLocations=${totalLocations}, targetLoc=${targetLoc}, cfi=${cfi}`)
+            await reader.rendition.display(cfi || reader.book.locations.start)
+          } else {
+            await reader.rendition.display(this.savedEbookLocation || reader.book.locations.start)
           }
           this.getChapters()
         })

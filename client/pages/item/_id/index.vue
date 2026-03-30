@@ -91,7 +91,11 @@
               {{ isMissing ? $strings.LabelMissing : $strings.LabelIncomplete }}
             </ui-btn>
 
-            <ui-btn v-if="showReadButton" color="bg-info" :padding-x="4" small class="flex items-center h-9 mr-2" @click="openEbook">
+            <ui-btn v-if="showReadButton && useEBookProgress && progressPercent < 1" color="bg-success" :padding-x="4" small class="flex items-center h-9 mr-2" @click="openEbook">
+              <span class="material-symbols text-2xl -ml-2 pr-2 text-white" aria-hidden="true">auto_stories</span>
+              Resume at {{ Math.round(progressPercent * 100) }}%
+            </ui-btn>
+            <ui-btn v-if="showReadButton" color="bg-info" :padding-x="4" small class="flex items-center h-9 mr-2" @click="openEbookFromStart">
               <span class="material-symbols text-2xl -ml-2 pr-2 text-white" aria-hidden="true">auto_stories</span>
               {{ $strings.ButtonRead }}
             </ui-btn>
@@ -499,6 +503,9 @@ export default {
     },
     openEbook() {
       this.$store.commit('showEReader', { libraryItem: this.libraryItem, keepProgress: true })
+    },
+    openEbookFromStart() {
+      this.$store.commit('showEReader', { libraryItem: this.libraryItem, keepProgress: false })
     },
     toggleFinished(confirmed = false) {
       if (!this.userIsFinished && this.progressPercent > 0 && !confirmed) {
