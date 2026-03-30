@@ -23,7 +23,22 @@
       </button>
     </div>
 
-    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" />
+    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" />
+
+    <!-- Reading status bar -->
+    <div v-if="readingStatus && isEpub" class="absolute bottom-0 left-0 w-full z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" :class="ereaderTheme === 'dark' ? 'bg-primary/90 text-gray-400' : ereaderTheme === 'sepia' ? 'bg-[rgb(230,222,202)]/90 text-[#5b4636]/70' : 'bg-white/90 text-gray-500'">
+      <div class="w-full h-0.5 bg-gray-700">
+        <div class="h-full bg-blue-500/60 transition-all duration-300" :style="{ width: Math.round(readingStatus.percentage * 100) + '%' }"></div>
+      </div>
+      <div class="flex items-center justify-between px-4 py-1.5 text-xs">
+        <span v-if="readingStatus.chapter" class="truncate max-w-[50%]">{{ readingStatus.chapter }}</span>
+        <span v-else></span>
+        <div class="flex items-center gap-4 shrink-0">
+          <span>{{ Math.round(readingStatus.percentage * 100) }}%</span>
+          <span v-if="readingStatus.totalLocations">Loc {{ readingStatus.location }} / {{ readingStatus.totalLocations }}</span>
+        </div>
+      </div>
+    </div>
 
     <!-- TOC side nav -->
     <div v-if="tocOpen" class="w-full h-full overflow-y-scroll absolute inset-0 bg-black/20 z-20" @click.stop.prevent="toggleToC"></div>
@@ -109,6 +124,18 @@
           </div>
           <ui-range-input v-model="ereaderSettings.textStroke" :min="0" :max="300" :step="5" @input="settingsUpdated" />
         </div>
+        <div class="flex items-center mb-4">
+          <div class="w-40">
+            <p class="text-lg">Text align:</p>
+          </div>
+          <ui-toggle-btns v-model="ereaderSettings.textAlign" :items="themeItems.textAlign" @input="settingsUpdated" />
+        </div>
+        <div class="flex items-center mb-4">
+          <div class="w-40">
+            <p class="text-lg">Column width:</p>
+          </div>
+          <ui-range-input v-model="ereaderSettings.maxWidth" :min="30" :max="100" :step="5" @input="settingsUpdated" />
+        </div>
         <div class="flex items-center">
           <div class="w-40">
             <p class="text-lg">{{ $strings.LabelLayout }}:</p>
@@ -136,6 +163,7 @@ export default {
       searchQuery: '',
       tocOpen: false,
       showSettings: false,
+      readingStatus: null,
       ereaderSettings: {
         theme: 'dark',
         font: 'serif',
@@ -143,7 +171,9 @@ export default {
         lineSpacing: 115,
         fontBoldness: 100,
         spread: 'auto',
-        textStroke: 0
+        textStroke: 0,
+        maxWidth: 70,
+        textAlign: 'justify'
       }
     }
   },
@@ -176,6 +206,10 @@ export default {
         {
           text: this.$strings.LabelLayoutSplitPage,
           value: 'auto'
+        },
+        {
+          text: 'Continuous',
+          value: 'continuous'
         }
       ]
     },
@@ -203,6 +237,28 @@ export default {
           {
             text: 'Serif',
             value: 'serif'
+          },
+          {
+            text: 'Georgia',
+            value: 'Georgia, serif'
+          },
+          {
+            text: 'Literata',
+            value: 'Literata, serif'
+          },
+          {
+            text: 'OpenDyslexic',
+            value: 'OpenDyslexic, sans-serif'
+          }
+        ],
+        textAlign: [
+          {
+            text: 'Justify',
+            value: 'justify'
+          },
+          {
+            text: 'Left',
+            value: 'left'
           }
         ]
       }
@@ -298,6 +354,9 @@ export default {
     settingsUpdated() {
       this.$refs.readerComponent?.updateSettings?.(this.ereaderSettings)
       localStorage.setItem('ereaderSettings', JSON.stringify(this.ereaderSettings))
+    },
+    onReadingStatus(status) {
+      this.readingStatus = status
     },
     toggleToC() {
       this.tocOpen = !this.tocOpen

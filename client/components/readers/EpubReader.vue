@@ -48,7 +48,9 @@ export default {
         fontScale: 100,
         lineSpacing: 115,
         spread: 'auto',
-        textStroke: 0
+        textStroke: 0,
+        maxWidth: 70,
+        textAlign: 'justify'
       }
     }
   },
@@ -133,12 +135,19 @@ export default {
       const fontScale   = this.ereaderSettings.fontScale   / 100
       const textStroke  = this.ereaderSettings.textStroke  / 100
 
+      const textAlign = this.ereaderSettings.textAlign || 'justify'
+
       return {
         '*': {
           color: `${fontColor}!important`,
           'background-color': `${backgroundColor}!important`,
           'line-height': `${lineSpacing * fontScale}rem!important`,
           '-webkit-text-stroke': `${textStroke}px ${fontColor}!important`
+        },
+        'p, div, li, td, th, dd, dt, blockquote, figcaption': {
+          'text-align': `${textAlign}!important`,
+          'hyphens': textAlign === 'justify' ? 'auto!important' : 'none!important',
+          '-webkit-hyphens': textAlign === 'justify' ? 'auto!important' : 'none!important'
         },
         a: {
           color: `${fontColor}!important`
@@ -148,16 +157,74 @@ export default {
   },
   methods: {
     updateSettings(settings) {
+      const oldSettings = this.ereaderSettings
       this.ereaderSettings = settings
 
       if (!this.rendition) return
+
+      // If layout mode changed, recreate the rendition entirely
+      const wasContin = oldSettings.spread === 'continuous'
+      const isContin = settings.spread === 'continuous'
+      if (wasContin !== isContin) {
+        this.recreateRendition()
+        return
+      }
 
       this.applyTheme()
 
       const fontScale = settings.fontScale || 100
       this.rendition.themes.fontSize(`${fontScale}%`)
       this.rendition.themes.font(settings.font)
-      this.rendition.spread(settings.spread || 'auto')
+
+      if (!isContin) {
+        this.rendition.spread(settings.spread || 'auto')
+      }
+
+      // Resize rendition to respect column width setting
+      const widthPct = (settings.maxWidth || 70) / 100
+      this.rendition.resize(Math.round(this.readerWidth * widthPct), this.readerHeight * 0.8)
+    },
+    recreateRendition() {
+      if (!this.book || !this.rendition) return
+
+      // Save current location before destroying
+      const currentLocation = this.rendition.location?.start?.cfi
+
+      // Destroy old rendition
+      this.rendition.destroy()
+
+      // Clear the viewer container
+      const viewer = document.getElementById('viewer')
+      if (viewer) viewer.innerHTML = ''
+
+      // Create new rendition with correct settings
+      const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
+      const isContinuous = this.ereaderSettings.spread === 'continuous'
+      this.rendition = this.book.renderTo('viewer', {
+        width: Math.round(this.readerWidth * widthPct),
+        height: this.readerHeight * 0.8,
+        allowScriptedContent: this.allowScriptedContent,
+        spread: isContinuous ? 'none' : (this.ereaderSettings.spread || 'auto'),
+        snap: !isContinuous,
+        manager: isContinuous ? 'default' : 'continuous',
+        flow: isContinuous ? 'scrolled-doc' : 'paginated'
+      })
+
+      // Reapply settings
+      const fontScale = this.ereaderSettings.fontScale || 100
+      this.rendition.themes.fontSize(`${fontScale}%`)
+      this.rendition.themes.font(this.ereaderSettings.font)
+
+      this.rendition.on('rendered', () => {
+        this.applyTheme()
+      })
+      this.rendition.on('relocated', this.relocated)
+      this.rendition.on('keydown', this.keyUp)
+      this.rendition.on('touchstart', (event) => { this.$emit('touchstart', event) })
+      this.rendition.on('touchend', (event) => { this.$emit('touchend', event) })
+
+      // Navigate to where we were
+      this.rendition.display(currentLocation || this.book.locations.start)
     },
     prev() {
       if (!this.rendition?.manager) return
@@ -314,6 +381,19 @@ export default {
     },
     /** @param {string} location - CFI of the new location */
     relocated(location) {
+      // Always emit reading status for the status bar, even during initial positioning
+      const pct = location.end?.percentage || 0
+      const position = this.book?.locations?.locationFromCfi(location.start.cfi)
+      const total = this.book?.locations?.total || 0
+      // chapters use percentage (0-1) as their start value, not location index
+      const chapter = this.findChapterFromPosition(this.chapters, pct)
+      this.$emit('reading-status', {
+        percentage: pct,
+        chapter: chapter?.title || '',
+        location: position || 0,
+        totalLocations: total
+      })
+
       if (this.initialPositioning) return
       if (this.savedEbookLocation === location.start.cfi) {
         return
@@ -355,14 +435,16 @@ export default {
       })
 
       /** @type {ePub.Rendition} */
+      const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
+      const isContinuous = this.ereaderSettings.spread === 'continuous'
       reader.rendition = reader.book.renderTo('viewer', {
-        width: this.readerWidth,
+        width: Math.round(this.readerWidth * widthPct),
         height: this.readerHeight * 0.8,
         allowScriptedContent: this.allowScriptedContent,
-        spread: 'auto',
-        snap: true,
-        manager: 'continuous',
-        flow: 'paginated'
+        spread: isContinuous ? 'none' : (this.ereaderSettings.spread || 'auto'),
+        snap: !isContinuous,
+        manager: isContinuous ? 'default' : 'continuous',
+        flow: isContinuous ? 'scrolled-doc' : 'paginated'
       })
 
       // Suppress relocated handler until user actually navigates (next/prev)
@@ -488,6 +570,29 @@ export default {
       if (!this.rendition) return
       this.rendition.getContents().forEach((c) => {
         c.addStylesheetRules(this.themeRules)
+        // Inject web fonts into the epub iframe
+        const doc = c.document || c.content?.ownerDocument
+        if (doc && !doc.getElementById('abs-custom-fonts')) {
+          const link = doc.createElement('link')
+          link.id = 'abs-custom-fonts'
+          link.rel = 'stylesheet'
+          link.href = 'https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,200..900&display=swap'
+          doc.head.appendChild(link)
+          const style = doc.createElement('style')
+          style.textContent = `
+            @font-face {
+              font-family: 'OpenDyslexic';
+              src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/woff/OpenDyslexic-Regular.woff') format('woff');
+              font-weight: normal;
+            }
+            @font-face {
+              font-family: 'OpenDyslexic';
+              src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/woff/OpenDyslexic-Bold.woff') format('woff');
+              font-weight: bold;
+            }
+          `
+          doc.head.appendChild(style)
+        }
       })
     }
   },
