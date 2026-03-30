@@ -1,5 +1,7 @@
 <template>
-  <div v-if="show" id="reader" :data-theme="ereaderTheme" class="group absolute top-0 left-0 w-full z-60 data-[theme=dark]:bg-primary data-[theme=dark]:text-white data-[theme=light]:bg-white data-[theme=light]:text-black data-[theme=sepia]:bg-[rgb(244,236,216)] data-[theme=sepia]:text-[#5b4636]" :class="{ 'reader-player-open': !!streamLibraryItem }">
+  <div v-if="show" id="reader" :data-theme="ereaderTheme" class="group absolute top-0 left-0 w-full h-full z-60 flex data-[theme=dark]:bg-primary data-[theme=dark]:text-white data-[theme=light]:bg-white data-[theme=light]:text-black data-[theme=sepia]:bg-[rgb(244,236,216)] data-[theme=sepia]:text-[#5b4636]" :class="{ 'reader-player-open': !!streamLibraryItem }">
+    <!-- Book content area -->
+    <div class="flex-1 relative min-w-0 h-full">
     <div class="absolute top-4 left-4 z-20 flex items-center">
       <button v-if="isEpub" @click="toggleToC" type="button" aria-label="Table of contents menu" class="inline-flex opacity-80 hover:opacity-100">
         <span class="material-symbols text-2xl">menu</span>
@@ -13,6 +15,9 @@
       <button v-if="isEpub && ebookBookmarks.length" @click="toggleBookmarksPanel" type="button" aria-label="View bookmarks" class="ml-2 inline-flex opacity-80 hover:opacity-100">
         <span class="material-symbols text-1.5xl">bookmarks</span>
         <span class="text-xs ml-0.5 mt-1">{{ ebookBookmarks.length }}</span>
+      </button>
+      <button v-if="isEpub" @click="toggleChatPanel" type="button" aria-label="Chat about book" class="ml-4 inline-flex opacity-80 hover:opacity-100">
+        <span class="material-symbols text-1.5xl">chat</span>
       </button>
     </div>
 
@@ -177,6 +182,85 @@
         </div>
       </div>
     </modals-modal>
+    </div><!-- end book content area -->
+
+    <!-- Chat panel (sidebar or fullscreen) -->
+    <div v-if="chatPanelOpen && isEpub"
+      :class="chatFullscreen
+        ? 'absolute inset-0 z-40 flex flex-col group-data-[theme=dark]:bg-primary group-data-[theme=dark]:text-white group-data-[theme=light]:bg-white group-data-[theme=light]:text-black group-data-[theme=sepia]:bg-[rgb(244,236,216)] group-data-[theme=sepia]:text-[#5b4636]'
+        : 'w-[420px] h-full shrink-0 flex flex-col border-l border-gray-700/30 group-data-[theme=dark]:bg-primary group-data-[theme=dark]:text-white group-data-[theme=light]:bg-white group-data-[theme=light]:text-black group-data-[theme=sepia]:bg-[rgb(244,236,216)] group-data-[theme=sepia]:text-[#5b4636]'"
+      >
+      <!-- Header -->
+      <div class="flex items-center justify-between p-3 border-b border-gray-700/30 shrink-0">
+        <div class="flex items-center gap-2">
+          <button @click="toggleChatPanel" type="button" class="inline-flex opacity-80 hover:opacity-100">
+            <span class="material-symbols text-xl">close</span>
+          </button>
+          <span class="text-sm font-semibold">Chat</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <button @click="chatFullscreen = !chatFullscreen" type="button" class="inline-flex opacity-60 hover:opacity-100" :title="chatFullscreen ? 'Sidebar' : 'Fullscreen'">
+            <span class="material-symbols text-lg">{{ chatFullscreen ? 'close_fullscreen' : 'open_in_full' }}</span>
+          </button>
+          <button @click="clearChat" type="button" class="text-xs opacity-60 hover:opacity-100">Clear</button>
+        </div>
+      </div>
+
+      <!-- Model + context selector -->
+      <div class="p-2 border-b border-gray-700/30 shrink-0 space-y-2">
+        <div class="flex items-center gap-2">
+          <label class="text-xs opacity-60 shrink-0">Model:</label>
+          <select v-model="chatModel" class="text-xs bg-transparent border border-gray-600/40 rounded px-1 py-0.5 flex-1 min-w-0">
+            <option v-for="m in ollamaModels" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-1">
+          <label class="text-xs opacity-60 shrink-0">Context:</label>
+          <button v-for="ctx in contextModes" :key="ctx.value"
+            @click="chatContext = ctx.value"
+            class="text-xs px-2 py-0.5 rounded border"
+            :class="chatContext === ctx.value ? 'border-blue-500 text-blue-400' : 'border-gray-600/40 opacity-60 hover:opacity-100'">
+            {{ ctx.label }}
+          </button>
+        </div>
+        <div v-if="chatContextPreview" class="text-xs opacity-40 truncate">{{ chatContextPreview }}</div>
+      </div>
+
+      <!-- Messages -->
+      <div ref="chatMessages" class="flex-1 overflow-y-auto p-3 space-y-3" :class="chatFullscreen ? 'max-w-3xl mx-auto w-full' : ''">
+        <div v-for="(msg, idx) in chatMessages" :key="idx" class="text-sm">
+          <div v-if="msg.role === 'user'" class="flex justify-end">
+            <div class="bg-blue-600/20 rounded-lg px-3 py-2 max-w-[85%]">
+              <p class="whitespace-pre-wrap">{{ msg.content }}</p>
+            </div>
+          </div>
+          <div v-else class="flex justify-start">
+            <div class="bg-gray-600/20 rounded-lg px-3 py-2 max-w-[85%]">
+              <p class="whitespace-pre-wrap">{{ msg.content }}</p>
+            </div>
+          </div>
+        </div>
+        <div v-if="chatLoading" class="flex justify-start">
+          <div class="bg-gray-600/20 rounded-lg px-3 py-2">
+            <span class="text-sm opacity-60">Thinking...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="p-2 border-t border-gray-700/30 shrink-0" :class="chatFullscreen ? 'max-w-3xl mx-auto w-full' : ''">
+        <form @submit.prevent="sendChat" class="flex gap-2">
+          <input v-model="chatInput" type="text" placeholder="Ask about the book..."
+            class="flex-1 text-sm bg-transparent border border-gray-600/40 rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
+            :disabled="chatLoading" />
+          <button type="submit" :disabled="chatLoading || !chatInput.trim() || !chatModel"
+            class="px-3 py-1.5 text-sm bg-blue-600/30 rounded hover:bg-blue-600/50 disabled:opacity-30">
+            <span class="material-symbols text-lg">send</span>
+          </button>
+        </form>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -199,6 +283,14 @@ export default {
       readingStatus: null,
       ebookBookmarks: [],
       bookmarksPanelOpen: false,
+      chatPanelOpen: false,
+      chatFullscreen: false,
+      chatMessages: [],
+      chatInput: '',
+      chatLoading: false,
+      chatModel: '',
+      chatContext: 'page',
+      ollamaModels: [],
       ereaderSettings: {
         theme: 'dark',
         font: 'serif',
@@ -231,6 +323,19 @@ export default {
     ereaderTheme() {
       if (this.isEpub) return this.ereaderSettings.theme
       return 'dark'
+    },
+    contextModes() {
+      return [
+        { label: 'Page', value: 'page' },
+        { label: 'Chapter', value: 'chapter' },
+        { label: 'Selection', value: 'selection' }
+      ]
+    },
+    chatContextPreview() {
+      if (this.chatContext === 'page') return 'Sending current visible text'
+      if (this.chatContext === 'chapter') return `Sending full chapter: ${this.readingStatus?.chapter || 'unknown'}`
+      if (this.chatContext === 'selection') return 'Sending selected text (highlight text first)'
+      return ''
     },
     isCurrentPageBookmarked() {
       if (!this.readingStatus?.currentCfi || !this.ebookBookmarks.length) return false
@@ -425,6 +530,158 @@ export default {
       const h = Math.floor(minutes / 60)
       const m = minutes % 60
       return m > 0 ? `${h}h ${m}m` : `${h}h`
+    },
+    toggleChatPanel() {
+      this.chatPanelOpen = !this.chatPanelOpen
+      if (this.chatPanelOpen && !this.ollamaModels.length) {
+        this.loadOllamaModels()
+      }
+      if (this.chatPanelOpen) {
+        this.loadChatHistory()
+      }
+      // Trigger reader resize after DOM updates
+      this.$nextTick(() => {
+        this.$refs.readerComponent?.resize?.()
+      })
+    },
+    async loadOllamaModels() {
+      try {
+        const resp = await this.$axios.$get('/api/ollama/tags')
+        this.ollamaModels = (resp.models || []).map(m => m.name)
+        if (this.ollamaModels.length && !this.chatModel) {
+          // Restore saved model or pick first
+          const saved = localStorage.getItem('ebookChatModel')
+          this.chatModel = saved && this.ollamaModels.includes(saved) ? saved : this.ollamaModels[0]
+        }
+      } catch (e) {
+        console.error('Failed to load Ollama models:', e)
+        this.ollamaModels = []
+      }
+    },
+    loadChatHistory() {
+      const itemId = this.selectedLibraryItem?.id
+      if (!itemId) return
+      try {
+        const data = localStorage.getItem(`ebookChat-${itemId}`)
+        this.chatMessages = data ? JSON.parse(data) : []
+      } catch (e) {
+        this.chatMessages = []
+      }
+    },
+    saveChatHistory() {
+      const itemId = this.selectedLibraryItem?.id
+      if (!itemId) return
+      localStorage.setItem(`ebookChat-${itemId}`, JSON.stringify(this.chatMessages))
+    },
+    clearChat() {
+      this.chatMessages = []
+      this.saveChatHistory()
+    },
+    async sendChat() {
+      const query = this.chatInput.trim()
+      if (!query || !this.chatModel) return
+
+      // Get context text from the reader
+      const contextText = await this.getChatContext()
+      if (!contextText && this.chatContext === 'selection') {
+        this.chatMessages.push({ role: 'assistant', content: 'No text selected. Highlight some text in the reader first.' })
+        return
+      }
+
+      this.chatInput = ''
+      this.chatMessages.push({ role: 'user', content: query })
+      this.chatLoading = true
+      this.scrollChatToBottom()
+
+      // Save selected model
+      localStorage.setItem('ebookChatModel', this.chatModel)
+
+      // Build messages for Ollama
+      const systemMsg = {
+        role: 'system',
+        content: `You are a reading companion helping discuss a book. The user is reading "${this.abTitle}"${this.abAuthor ? ` by ${this.abAuthor}` : ''}. Answer questions about the text provided. Be concise and direct.`
+      }
+      const contextMsg = contextText ? {
+        role: 'system',
+        content: `[Book context — ${this.chatContext}]\n\n${contextText}`
+      } : null
+
+      // Send recent conversation (last 10 messages) plus new query
+      const recentMessages = this.chatMessages.slice(-11)
+      const messages = [systemMsg, contextMsg, ...recentMessages].filter(Boolean)
+
+      try {
+        const resp = await this.$axios.$post('/api/ollama/chat', {
+          model: this.chatModel,
+          messages
+        }, { timeout: 300000 })
+        if (resp.error) {
+          this.chatMessages.push({ role: 'assistant', content: `Ollama error: ${resp.error}` })
+        } else {
+          const reply = resp.message?.content || 'No response received'
+          this.chatMessages.push({ role: 'assistant', content: reply })
+        }
+      } catch (e) {
+        const errMsg = e.response?.data?.error || e.message || 'Request failed'
+        this.chatMessages.push({ role: 'assistant', content: `Error: ${errMsg}` })
+      }
+
+      this.chatLoading = false
+      this.saveChatHistory()
+      this.scrollChatToBottom()
+    },
+    async getChatContext() {
+      const reader = this.$refs.readerComponent
+      if (!reader) return ''
+
+      if (this.chatContext === 'selection') {
+        // Get selected text from the epub iframe
+        const contents = reader.rendition?.getContents?.() || []
+        for (const c of contents) {
+          const doc = c.document || c.content?.ownerDocument
+          if (doc) {
+            const sel = doc.getSelection?.()
+            if (sel && sel.toString().trim()) return sel.toString().trim()
+          }
+        }
+        return ''
+      }
+
+      if (this.chatContext === 'page') {
+        // Get visible text from current view
+        const contents = reader.rendition?.getContents?.() || []
+        const texts = []
+        for (const c of contents) {
+          const doc = c.document || c.content?.ownerDocument
+          if (doc?.body) texts.push(doc.body.innerText || doc.body.textContent || '')
+        }
+        return texts.join('\n').trim().slice(0, 8000)
+      }
+
+      if (this.chatContext === 'chapter') {
+        // Load the current chapter's full text
+        try {
+          const currentSection = reader.rendition?.location?.start?.href
+          if (!currentSection) return ''
+          const item = reader.book.spine.get(currentSection)
+          if (!item) return ''
+          await item.load(reader.book.load.bind(reader.book))
+          const text = item.document?.body?.innerText || item.document?.body?.textContent || ''
+          item.unload()
+          return text.trim().slice(0, 30000)
+        } catch (e) {
+          console.error('Failed to load chapter text:', e)
+          return ''
+        }
+      }
+
+      return ''
+    },
+    scrollChatToBottom() {
+      this.$nextTick(() => {
+        const el = this.$refs.chatMessages
+        if (el) el.scrollTop = el.scrollHeight
+      })
     },
     toggleToC() {
       this.tocOpen = !this.tocOpen

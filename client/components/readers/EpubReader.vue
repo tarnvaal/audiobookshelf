@@ -106,6 +106,9 @@ export default {
       return `ebookLocations-${this.libraryItemId}`
     },
     readerWidth() {
+      // Use actual container width instead of window width
+      const el = document.getElementById('epub-reader')
+      if (el) return el.clientWidth
       if (this.windowWidth < 640) return this.windowWidth
       return this.windowWidth - 200
     },
@@ -590,7 +593,11 @@ export default {
     resize() {
       this.windowWidth = window.innerWidth
       this.windowHeight = window.innerHeight
-      this.rendition?.resize(this.readerWidth, this.readerHeight * 0.8)
+      // Use actual container width for rendition sizing
+      const el = document.getElementById('epub-reader')
+      const width = el ? el.clientWidth : this.readerWidth
+      const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
+      this.rendition?.resize(Math.round(width * widthPct), this.readerHeight * 0.8)
     },
     loadBookmarks() {
       try {

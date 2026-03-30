@@ -319,6 +319,29 @@ class Server {
     router.use('/hls', this.hlsRouter.router)
     router.use('/public', this.publicRouter.router)
 
+    // Ollama LLM proxy
+    const OLLAMA_URL = process.env.OLLAMA_URL || 'http://host.docker.internal:11434'
+    router.get('/api/ollama/tags', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const resp = await axios.get(`${OLLAMA_URL}/api/tags`, { timeout: 5000 })
+        res.json(resp.data)
+      } catch (error) {
+        res.status(502).json({ error: 'Ollama not reachable' })
+      }
+    })
+    router.post('/api/ollama/chat', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
+          model: req.body.model,
+          messages: req.body.messages,
+          stream: false
+        }, { timeout: 300000 })
+        res.json(resp.data)
+      } catch (error) {
+        res.status(502).json({ error: error.message || 'Ollama request failed' })
+      }
+    })
+
     // Static folder
     router.use(express.static(Path.join(global.appRoot, 'static')))
 
