@@ -16,6 +16,20 @@
         <span class="material-symbols text-1.5xl">bookmarks</span>
         <span class="text-xs ml-0.5 mt-1">{{ ebookBookmarks.length }}</span>
       </button>
+      <button v-if="isEpub" @click="ttsToggle" type="button" aria-label="Read aloud" class="ml-4 inline-flex opacity-80 hover:opacity-100" :title="ttsPlaying ? 'Stop reading' : 'Read aloud'">
+        <span class="material-symbols text-1.5xl" :class="ttsPlaying ? 'text-blue-400' : ''">{{ ttsPlaying ? 'stop' : 'play_arrow' }}</span>
+      </button>
+      <div v-if="ttsPlaying || ttsPaused" class="ml-1 flex items-center gap-1">
+        <button @click="ttsPauseResume" type="button" class="inline-flex opacity-80 hover:opacity-100" :title="ttsPaused ? 'Resume' : 'Pause'">
+          <span class="material-symbols text-1.5xl">{{ ttsPaused ? 'play_arrow' : 'pause' }}</span>
+        </button>
+        <button @click="ttsSkip" type="button" class="inline-flex opacity-80 hover:opacity-100" title="Skip paragraph">
+          <span class="material-symbols text-1.5xl">skip_next</span>
+        </button>
+        <select v-model.number="ttsSpeed" @change="saveTtsSettings" class="text-xs bg-transparent border border-gray-600/40 rounded px-1 py-0.5 opacity-80">
+          <option v-for="s in [0.5, 0.75, 1, 1.25, 1.5, 2]" :key="s" :value="s">{{ s }}x</option>
+        </select>
+      </div>
       <button v-if="isEpub" @click="toggleChatPanel" type="button" aria-label="Chat about book" class="ml-4 inline-flex opacity-80 hover:opacity-100">
         <span class="material-symbols text-1.5xl">chat</span>
       </button>
@@ -35,7 +49,7 @@
       </button>
     </div>
 
-    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" />
+    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" @tts-start-from="ttsStartFrom" />
 
     <!-- Reading status bar -->
     <div v-if="readingStatus && isEpub" class="absolute bottom-0 left-0 w-full z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" :class="ereaderTheme === 'dark' ? 'bg-primary/90 text-gray-400' : ereaderTheme === 'sepia' ? 'bg-[rgb(230,222,202)]/90 text-[#5b4636]/70' : 'bg-white/90 text-gray-500'">
@@ -329,6 +343,19 @@ export default {
       rangeEnd: 10,
       rangeChapters: [],
       rangePreviewLength: 0,
+      // TTS state
+      ttsPlaying: false,
+      ttsPaused: false,
+      ttsParagraphs: [],
+      ttsCurrentIndex: 0,
+      ttsAudio: null,
+      ttsSpeed: 1,
+      ttsVoice: 'af_bella',
+      ttsAbortController: null,
+      ttsClickMode: false,
+      ttsBuffer: {},         // { [index]: { blob, url } } — prefetched audio
+      ttsBufferPending: {},  // { [index]: Promise } — in-flight fetches
+      ttsBufferAhead: 3,     // how many paragraphs to prefetch
       ereaderSettings: {
         theme: 'dark',
         font: 'serif',
@@ -873,6 +900,224 @@ export default {
         if (el) el.scrollTop = el.scrollHeight
       })
     },
+    // ── TTS methods ──
+    async ttsToggle() {
+      if (this.ttsPlaying || this.ttsPaused) {
+        this.ttsStop()
+        return
+      }
+      this.loadTtsSettings()
+      await this.ttsStart(0)
+    },
+    async ttsStart(fromIndex) {
+      const reader = this.$refs.readerComponent
+      if (!reader) return
+
+      this.ttsParagraphs = reader.getTtsParagraphs()
+      if (!this.ttsParagraphs.length) return
+
+      this.ttsCurrentIndex = Math.min(fromIndex, this.ttsParagraphs.length - 1)
+      this.ttsPlaying = true
+      this.ttsPaused = false
+      this.ttsClearBuffer()
+
+      reader.ttsInstallClickHandlers()
+
+      // Kick off prefetch for current + next N paragraphs
+      this.ttsFillBuffer()
+      await this.ttsPlayCurrent()
+    },
+    ttsStop() {
+      this.ttsPlaying = false
+      this.ttsPaused = false
+      if (this.ttsAudio) {
+        this.ttsAudio.pause()
+        this.ttsAudio = null
+      }
+      if (this.ttsAbortController) {
+        this.ttsAbortController.abort()
+        this.ttsAbortController = null
+      }
+      this.ttsClearBuffer()
+      const reader = this.$refs.readerComponent
+      if (reader) {
+        reader.ttsClearHighlight()
+        reader.ttsRemoveClickHandlers()
+      }
+    },
+    ttsClearBuffer() {
+      // Revoke any buffered object URLs
+      for (const key in this.ttsBuffer) {
+        if (this.ttsBuffer[key]?.url) URL.revokeObjectURL(this.ttsBuffer[key].url)
+      }
+      this.ttsBuffer = {}
+      this.ttsBufferPending = {}
+    },
+    ttsFillBuffer() {
+      if (!this.ttsPlaying) return
+      for (let i = this.ttsCurrentIndex; i < Math.min(this.ttsCurrentIndex + this.ttsBufferAhead, this.ttsParagraphs.length); i++) {
+        if (this.ttsBuffer[i] || this.ttsBufferPending[i]) continue
+        this.ttsBufferPending[i] = this.ttsFetchParagraph(i)
+      }
+    },
+    async ttsFetchParagraph(index) {
+      if (index >= this.ttsParagraphs.length) return null
+      const para = this.ttsParagraphs[index]
+      try {
+        const data = await this.$axios.$post('/api/tts/speech', {
+          input: para.text,
+          voice: this.ttsVoice,
+          speed: this.ttsSpeed
+        }, { responseType: 'arraybuffer' })
+        const blob = new Blob([data], { type: 'audio/mpeg' })
+        const url = URL.createObjectURL(blob)
+        const entry = { blob, url }
+        this.ttsBuffer[index] = entry
+        delete this.ttsBufferPending[index]
+        return entry
+      } catch (e) {
+        console.error(`TTS fetch failed for paragraph ${index}:`, e)
+        delete this.ttsBufferPending[index]
+        return null
+      }
+    },
+    async ttsGetAudio(index) {
+      // Return from buffer if ready, otherwise wait for in-flight or fetch fresh
+      if (this.ttsBuffer[index]) return this.ttsBuffer[index]
+      if (this.ttsBufferPending[index]) return await this.ttsBufferPending[index]
+      // Not buffered and not pending — fetch now
+      return await this.ttsFetchParagraph(index)
+    },
+    ttsPauseResume() {
+      if (!this.ttsAudio) return
+      if (this.ttsPaused) {
+        this.ttsAudio.play()
+        this.ttsPaused = false
+      } else {
+        this.ttsAudio.pause()
+        this.ttsPaused = true
+      }
+    },
+    async ttsSkip() {
+      if (this.ttsAudio) {
+        this.ttsAudio.pause()
+        this.ttsAudio = null
+      }
+      this.ttsCurrentIndex++
+      if (this.ttsCurrentIndex >= this.ttsParagraphs.length) {
+        const advanced = await this.ttsAdvancePage()
+        if (!advanced) { this.ttsStop(); return }
+      }
+      this.ttsFillBuffer()
+      await this.ttsPlayCurrent()
+    },
+    async ttsPlayCurrent() {
+      if (!this.ttsPlaying || this.ttsCurrentIndex >= this.ttsParagraphs.length) {
+        this.ttsStop()
+        return
+      }
+
+      const para = this.ttsParagraphs[this.ttsCurrentIndex]
+      const reader = this.$refs.readerComponent
+
+      if (reader && para.el) {
+        reader.ttsHighlight(para.el)
+        reader.ttsSaveProgress(para.el)
+      }
+
+      const audio = await this.ttsGetAudio(this.ttsCurrentIndex)
+      if (!audio || !this.ttsPlaying) {
+        if (this.ttsPlaying) this.ttsStop()
+        return
+      }
+
+      // Clean up this entry from the buffer (we're consuming it)
+      delete this.ttsBuffer[this.ttsCurrentIndex]
+
+      this.ttsAudio = new Audio(audio.url)
+
+      this.ttsAudio.onended = async () => {
+        URL.revokeObjectURL(audio.url)
+        if (!this.ttsPlaying) return
+        this.ttsCurrentIndex++
+        if (this.ttsCurrentIndex >= this.ttsParagraphs.length) {
+          const advanced = await this.ttsAdvancePage()
+          if (!advanced) { this.ttsStop(); return }
+        }
+        // Refill buffer from new position
+        this.ttsFillBuffer()
+        await this.ttsPlayCurrent()
+      }
+
+      this.ttsAudio.onerror = (e) => {
+        console.error('TTS audio playback error:', e)
+        URL.revokeObjectURL(audio.url)
+        this.ttsStop()
+      }
+
+      try {
+        await this.ttsAudio.play()
+      } catch (e) {
+        console.error('TTS play error:', e)
+        this.ttsStop()
+      }
+    },
+    async ttsAdvancePage() {
+      const reader = this.$refs.readerComponent
+      if (!reader || !reader.hasNext) return false
+
+      // Clear buffer since paragraph references will change
+      this.ttsClearBuffer()
+
+      await reader.next()
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      this.ttsParagraphs = reader.getTtsParagraphs()
+      this.ttsCurrentIndex = 0
+
+      if (!this.ttsParagraphs.length) return false
+
+      reader.ttsInstallClickHandlers()
+      // Prefetch for the new page
+      this.ttsFillBuffer()
+      return true
+    },
+    ttsStartFrom(paragraphIndex) {
+      if (!this.ttsPlaying && !this.ttsPaused) {
+        this.loadTtsSettings()
+        this.ttsStart(paragraphIndex)
+      } else {
+        if (this.ttsAudio) {
+          this.ttsAudio.pause()
+          this.ttsAudio = null
+        }
+        // Clear buffer since we're jumping
+        this.ttsClearBuffer()
+        const reader = this.$refs.readerComponent
+        if (reader) this.ttsParagraphs = reader.getTtsParagraphs()
+        this.ttsCurrentIndex = paragraphIndex
+        this.ttsPaused = false
+        this.ttsFillBuffer()
+        this.ttsPlayCurrent()
+      }
+    },
+    loadTtsSettings() {
+      try {
+        const saved = localStorage.getItem('ttsSettings')
+        if (saved) {
+          const s = JSON.parse(saved)
+          if (s.speed) this.ttsSpeed = s.speed
+          if (s.voice) this.ttsVoice = s.voice
+        }
+      } catch (e) {}
+    },
+    saveTtsSettings() {
+      localStorage.setItem('ttsSettings', JSON.stringify({
+        speed: this.ttsSpeed,
+        voice: this.ttsVoice
+      }))
+    },
+    // ── end TTS methods ──
     toggleToC() {
       this.tocOpen = !this.tocOpen
       this.chapters = this.$refs.readerComponent.chapters
@@ -982,6 +1227,7 @@ export default {
       this.registerListeners()
     },
     close() {
+      this.ttsStop()
       this.unregisterListeners()
       this.isSearching = false
       this.searchQuery = ''

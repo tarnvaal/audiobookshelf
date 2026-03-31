@@ -636,6 +636,149 @@ export default {
       this.initialPositioning = false
       this.rendition.display(cfi)
     },
+    /**
+     * Save reading progress for a given paragraph element.
+     * Generates a CFI from the element and calls updateProgress.
+     */
+    ttsSaveProgress(el) {
+      if (!this.keepProgress || !el || !this.book || !this.rendition) return
+      try {
+        // Find which spine item contains this element
+        const contents = this.rendition.getContents() || []
+        for (const c of contents) {
+          const doc = c.document || c.content?.ownerDocument
+          if (!doc || !doc.body.contains(el)) continue
+          const section = c.sectionIndex != null ? this.book.spine.get(c.sectionIndex) : null
+          if (!section) continue
+          const cfi = section.cfiFromElement(el)
+          if (!cfi) continue
+          const pct = this.book.locations.percentageFromCfi(cfi)
+          this.updateProgress({
+            ebookLocation: cfi,
+            ebookProgress: pct || undefined
+          })
+          return
+        }
+      } catch (e) {
+        console.error('ttsSaveProgress failed:', e)
+      }
+    },
+    /**
+     * Get all paragraph elements from the current epub iframe(s).
+     * Returns an array of { el, text } objects.
+     */
+    getTtsParagraphs() {
+      const contents = this.rendition?.getContents?.() || []
+      const paragraphs = []
+      for (const c of contents) {
+        const doc = c.document || c.content?.ownerDocument
+        if (!doc?.body) continue
+        const els = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote')
+        els.forEach((el) => {
+          const text = (el.innerText || el.textContent || '').trim()
+          if (text.length > 0) {
+            paragraphs.push({ el, text })
+          }
+        })
+      }
+      return paragraphs
+    },
+    /**
+     * Highlight a paragraph element in the epub iframe.
+     * Clears any previous highlight first.
+     */
+    ttsHighlight(el) {
+      this.ttsClearHighlight()
+      if (!el) return
+      el.setAttribute('data-tts-active', 'true')
+      el.style.setProperty('outline', '2px solid rgba(59, 130, 246, 0.5)', 'important')
+      el.style.setProperty('outline-offset', '2px', 'important')
+      el.style.setProperty('background-color', 'rgba(59, 130, 246, 0.08)', 'important')
+      // Scroll the paragraph into view within the iframe
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    },
+    ttsClearHighlight() {
+      const contents = this.rendition?.getContents?.() || []
+      for (const c of contents) {
+        const doc = c.document || c.content?.ownerDocument
+        if (!doc) continue
+        const active = doc.querySelectorAll('[data-tts-active]')
+        active.forEach((el) => {
+          el.removeAttribute('data-tts-active')
+          el.style.removeProperty('outline')
+          el.style.removeProperty('outline-offset')
+          el.style.removeProperty('background-color')
+        })
+      }
+    },
+    /**
+     * Install click handlers on paragraphs so user can click to set TTS start point.
+     * Emits 'tts-start-from' with the paragraph index.
+     */
+    ttsInstallClickHandlers() {
+      const contents = this.rendition?.getContents?.() || []
+      for (const c of contents) {
+        const doc = c.document || c.content?.ownerDocument
+        if (!doc?.body) continue
+        // Remove old handler if any
+        if (doc._ttsClickHandler) {
+          doc.body.removeEventListener('click', doc._ttsClickHandler)
+        }
+        doc._ttsClickHandler = (e) => {
+          // Walk up from click target to find a paragraph-level element
+          let target = e.target
+          const tags = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE'])
+          while (target && target !== doc.body) {
+            if (tags.has(target.tagName)) {
+              // Find this element's index in the paragraph list
+              const paragraphs = this.getTtsParagraphs()
+              const idx = paragraphs.findIndex(p => p.el === target)
+              if (idx >= 0) {
+                this.$emit('tts-start-from', idx)
+              }
+              return
+            }
+            target = target.parentElement
+          }
+        }
+        doc.body.addEventListener('click', doc._ttsClickHandler)
+      }
+    },
+    ttsRemoveClickHandlers() {
+      const contents = this.rendition?.getContents?.() || []
+      for (const c of contents) {
+        const doc = c.document || c.content?.ownerDocument
+        if (!doc?.body || !doc._ttsClickHandler) continue
+        doc.body.removeEventListener('click', doc._ttsClickHandler)
+        delete doc._ttsClickHandler
+      }
+    },
+    /**
+     * Load all paragraphs from the current spine section (full chapter),
+     * not just what's visible. Returns array of text strings.
+     */
+    async getTtsChapterParagraphs() {
+      const currentSection = this.rendition?.location?.start?.href
+      if (!currentSection) return []
+      try {
+        const item = this.book.spine.get(currentSection)
+        if (!item) return []
+        await item.load(this.book.load.bind(this.book))
+        const doc = item.document
+        if (!doc?.body) { item.unload(); return [] }
+        const els = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote')
+        const texts = []
+        els.forEach((el) => {
+          const text = (el.innerText || el.textContent || '').trim()
+          if (text.length > 0) texts.push(text)
+        })
+        item.unload()
+        return texts
+      } catch (e) {
+        console.error('getTtsChapterParagraphs failed:', e)
+        return []
+      }
+    },
     applyTheme() {
       if (!this.rendition) return
       this.rendition.getContents().forEach((c) => {

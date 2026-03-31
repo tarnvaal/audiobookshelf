@@ -350,6 +350,35 @@ class Server {
       }
     })
 
+    // Kokoro TTS proxy
+    const KOKORO_URL = process.env.KOKORO_URL || 'http://host.docker.internal:8880'
+    router.get('/api/tts/voices', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const resp = await axios.get(`${KOKORO_URL}/v1/audio/voices`, { timeout: 5000 })
+        res.json(resp.data)
+      } catch (error) {
+        res.status(502).json({ error: 'Kokoro TTS not reachable' })
+      }
+    })
+    router.post('/api/tts/speech', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const resp = await axios.post(`${KOKORO_URL}/v1/audio/speech`, {
+          model: req.body.model || 'kokoro',
+          input: req.body.input,
+          voice: req.body.voice || 'af_bella',
+          response_format: 'mp3',
+          speed: req.body.speed || 1.0
+        }, {
+          timeout: 120000,
+          responseType: 'stream'
+        })
+        res.set('Content-Type', 'audio/mpeg')
+        resp.data.pipe(res)
+      } catch (error) {
+        res.status(502).json({ error: error.message || 'Kokoro TTS request failed' })
+      }
+    })
+
     // Static folder
     router.use(express.static(Path.join(global.appRoot, 'static')))
 
