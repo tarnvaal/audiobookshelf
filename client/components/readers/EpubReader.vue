@@ -832,9 +832,74 @@ export default {
         return []
       }
     },
-    patchContinuousManager() {
-      // Intentionally empty — previous scroll patches caused chapter
-      // navigation drift. Leaving as stub so callers don't error.
+    /**
+     * For continuous scroll mode: pre-load all spine items so the manager
+     * never needs to prepend/append during navigation. This eliminates the
+     * counter() race condition that causes chapter navigation drift.
+     */
+    async patchContinuousManager() {
+      const mgr = this.rendition?.manager
+      if (!mgr || mgr.name !== 'continuous') return
+
+      const isContinuous = this.ereaderSettings.spread === 'continuous'
+      if (!isContinuous) return
+
+      // Save the current location so we can restore after preloading
+      const currentCfi = this.rendition.location?.start?.cfi
+
+      // Suppress counter() during preload — we'll reposition after
+      const origCounter = mgr.counter.bind(mgr)
+      mgr.counter = function () {}
+
+      // Suppress scroll events during preload
+      const origOnScroll = mgr._onScroll
+      if (origOnScroll) {
+        const scroller = mgr.settings.fullsize ? window : mgr.container
+        scroller.removeEventListener('scroll', origOnScroll)
+      }
+
+      // Append all spine items below current
+      let last = mgr.views.last()
+      while (last) {
+        const next = last.section.next()
+        if (!next) break
+        const view = mgr.append(next)
+        await view.display(mgr.request)
+        last = mgr.views.last()
+      }
+
+      // Prepend all spine items above current
+      let first = mgr.views.first()
+      while (first) {
+        const prev = first.section.prev()
+        if (!prev) break
+        const view = mgr.prepend(prev)
+        await view.display(mgr.request)
+        first = mgr.views.first()
+      }
+
+      // Restore counter
+      mgr.counter = origCounter
+
+      // Restore scroll listener
+      if (origOnScroll) {
+        const scroller = mgr.settings.fullsize ? window : mgr.container
+        scroller.addEventListener('scroll', origOnScroll)
+      }
+
+      // Navigate back to where we were — all sections are loaded now so
+      // check() won't prepend anything and counter() won't fire
+      if (currentCfi) {
+        await this.rendition.display(currentCfi)
+      }
+
+      // Disable trim and check so sections never get removed or re-added
+      mgr.trim = function () { return Promise.resolve() }
+
+      // Replace check to be a no-op since everything is loaded
+      mgr.check = function () { return Promise.resolve(false) }
+
+      console.log('[patchContinuousManager] Pre-loaded all', mgr.views.length(), 'spine items')
     },
     applyTheme() {
       if (!this.rendition) return
