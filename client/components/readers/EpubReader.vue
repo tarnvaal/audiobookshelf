@@ -231,8 +231,10 @@ export default {
       this.rendition.on('touchstart', (event) => { this.$emit('touchstart', event) })
       this.rendition.on('touchend', (event) => { this.$emit('touchend', event) })
 
-      // Navigate to where we were
-      this.rendition.display(currentLocation || this.book.locations.start)
+      // Navigate to where we were, then patch the manager
+      this.rendition.display(currentLocation || this.book.locations.start).then(() => {
+        this.patchContinuousManager()
+      })
     },
     prev() {
       if (!this.rendition?.manager) return
@@ -284,7 +286,7 @@ export default {
       return filteredResults
     },
     keyUp(e) {
-      const rtl = this.book.package.metadata.direction === 'rtl'
+      const rtl = this.book?.package?.metadata?.direction === 'rtl'
       if ((e.keyCode || e.which) == 37) {
         return rtl ? this.next() : this.prev()
       } else if ((e.keyCode || e.which) == 39) {
@@ -389,8 +391,9 @@ export default {
     },
     /** @param {string} location - CFI of the new location */
     relocated(location) {
+      if (!this.book) return
       const pct = location.end?.percentage || 0
-      const position = this.book?.locations?.locationFromCfi(location.start.cfi)
+      const position = this.book.locations?.locationFromCfi(location.start.cfi)
       const total = this.book?.locations?.total || 0
       const chapter = this.findChapterFromPosition(this.chapters, pct)
 
@@ -463,33 +466,32 @@ export default {
         requestMethod: customRequest
       })
 
-      /** @type {ePub.Rendition} */
-      const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
-      const isContinuous = this.ereaderSettings.spread === 'continuous'
-      reader.rendition = reader.book.renderTo('viewer', {
-        width: Math.round(this.readerWidth * widthPct),
-        height: this.readerHeight * 0.8,
-        allowScriptedContent: this.allowScriptedContent,
-        spread: isContinuous ? 'none' : (this.ereaderSettings.spread || 'auto'),
-        snap: !isContinuous,
-        manager: 'continuous',
-        flow: isContinuous ? 'scrolled-doc' : 'paginated'
-      })
-
       // Suppress relocated handler until user actually navigates (next/prev)
       const targetProgress = this.savedEbookProgress
       if (targetProgress) this.initialPositioning = true
 
-      reader.rendition.on('rendered', () => {
-        this.applyTheme()
-      })
-
+      // Wait for the book to fully open before creating the rendition.
+      // epubjs's renderTo accesses book.package internally; calling it
+      // before book.ready resolves causes "this.book is undefined" errors.
       reader.book.ready
         .then(async () => {
-          // set up event listeners
+          const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
+          const isContinuous = this.ereaderSettings.spread === 'continuous'
+          reader.rendition = reader.book.renderTo('viewer', {
+            width: Math.round(this.readerWidth * widthPct),
+            height: this.readerHeight * 0.8,
+            allowScriptedContent: this.allowScriptedContent,
+            spread: isContinuous ? 'none' : (this.ereaderSettings.spread || 'auto'),
+            snap: !isContinuous,
+            manager: 'continuous',
+            flow: isContinuous ? 'scrolled-doc' : 'paginated'
+          })
+
+          reader.rendition.on('rendered', () => {
+            this.applyTheme()
+          })
           reader.rendition.on('relocated', reader.relocated)
           reader.rendition.on('keydown', reader.keyUp)
-
           reader.rendition.on('touchstart', (event) => {
             this.$emit('touchstart', event)
           })
@@ -497,7 +499,7 @@ export default {
             this.$emit('touchend', event)
           })
 
-          // Load or generate location map first
+          // Load or generate location map
           const savedLocations = this.loadLocations()
           if (savedLocations) {
             reader.book.locations.load(savedLocations)
@@ -506,7 +508,7 @@ export default {
             this.checkSaveLocations(reader.book.locations.save())
           }
 
-          // Now navigate: use percentage if available, otherwise use saved location
+          // Navigate to saved position
           if (targetProgress) {
             const totalLocations = reader.book.locations.total
             const targetLoc = Math.ceil(totalLocations * targetProgress)
@@ -516,6 +518,8 @@ export default {
           } else {
             await reader.rendition.display(this.savedEbookLocation || reader.book.locations.start)
           }
+          // Patch manager now that display() has created it
+          this.patchContinuousManager()
           this.getChapters()
         })
         .catch((error) => {
@@ -523,6 +527,7 @@ export default {
         })
     },
     getChapters() {
+      if (!this.book?.packaging) return Promise.resolve()
       // Load the list of chapters in the book. See https://github.com/futurepress/epub.js/issues/759
       const toc = this.book?.navigation?.toc || []
 
@@ -684,6 +689,39 @@ export default {
       return paragraphs
     },
     /**
+     * Find the index of the first paragraph that's currently visible on screen.
+     * Used to start TTS from where the user is actually reading.
+     */
+    getFirstVisibleParagraphIndex(paragraphs) {
+      if (!paragraphs.length) return 0
+      // Get the container's visible area
+      const container = this.rendition?.manager?.container
+      if (!container) return 0
+      const containerRect = container.getBoundingClientRect()
+
+      for (let i = 0; i < paragraphs.length; i++) {
+        const el = paragraphs[i].el
+        try {
+          // Get the element's position relative to the viewport
+          // The element is inside an iframe, so we need to account for the iframe's offset
+          const iframe = el.ownerDocument?.defaultView?.frameElement
+          if (!iframe) continue
+          const iframeRect = iframe.getBoundingClientRect()
+          const elRect = el.getBoundingClientRect()
+          // Element's absolute position = iframe offset + element offset within iframe
+          const absTop = iframeRect.top + elRect.top
+          const absBottom = iframeRect.top + elRect.bottom
+          // Check if element overlaps with the visible container area
+          if (absBottom > containerRect.top && absTop < containerRect.bottom) {
+            return i
+          }
+        } catch (e) {
+          continue
+        }
+      }
+      return 0
+    },
+    /**
      * Highlight a paragraph element in the epub iframe.
      * Clears any previous highlight first.
      */
@@ -720,17 +758,25 @@ export default {
       for (const c of contents) {
         const doc = c.document || c.content?.ownerDocument
         if (!doc?.body) continue
-        // Remove old handler if any
+        // Remove old handlers if any
         if (doc._ttsClickHandler) {
           doc.body.removeEventListener('click', doc._ttsClickHandler)
         }
+        if (doc._ttsMouseDown) {
+          doc.body.removeEventListener('mousedown', doc._ttsMouseDown)
+        }
+        // Track mousedown position to distinguish clicks from scroll drags
+        let downX = 0, downY = 0
+        doc._ttsMouseDown = (e) => { downX = e.clientX; downY = e.clientY }
         doc._ttsClickHandler = (e) => {
+          // Ignore if mouse moved more than 5px (scroll/drag)
+          const dist = Math.sqrt((e.clientX - downX) ** 2 + (e.clientY - downY) ** 2)
+          if (dist > 5) return
           // Walk up from click target to find a paragraph-level element
           let target = e.target
           const tags = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE'])
           while (target && target !== doc.body) {
             if (tags.has(target.tagName)) {
-              // Find this element's index in the paragraph list
               const paragraphs = this.getTtsParagraphs()
               const idx = paragraphs.findIndex(p => p.el === target)
               if (idx >= 0) {
@@ -741,6 +787,7 @@ export default {
             target = target.parentElement
           }
         }
+        doc.body.addEventListener('mousedown', doc._ttsMouseDown)
         doc.body.addEventListener('click', doc._ttsClickHandler)
       }
     },
@@ -748,9 +795,15 @@ export default {
       const contents = this.rendition?.getContents?.() || []
       for (const c of contents) {
         const doc = c.document || c.content?.ownerDocument
-        if (!doc?.body || !doc._ttsClickHandler) continue
-        doc.body.removeEventListener('click', doc._ttsClickHandler)
-        delete doc._ttsClickHandler
+        if (!doc?.body) continue
+        if (doc._ttsClickHandler) {
+          doc.body.removeEventListener('click', doc._ttsClickHandler)
+          delete doc._ttsClickHandler
+        }
+        if (doc._ttsMouseDown) {
+          doc.body.removeEventListener('mousedown', doc._ttsMouseDown)
+          delete doc._ttsMouseDown
+        }
       }
     },
     /**
@@ -778,6 +831,10 @@ export default {
         console.error('getTtsChapterParagraphs failed:', e)
         return []
       }
+    },
+    patchContinuousManager() {
+      // Intentionally empty — previous scroll patches caused chapter
+      // navigation drift. Leaving as stub so callers don't error.
     },
     applyTheme() {
       if (!this.rendition) return

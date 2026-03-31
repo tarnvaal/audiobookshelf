@@ -907,7 +907,7 @@ export default {
         return
       }
       this.loadTtsSettings()
-      await this.ttsStart(0)
+      await this.ttsStart(-1)
     },
     async ttsStart(fromIndex) {
       const reader = this.$refs.readerComponent
@@ -916,6 +916,10 @@ export default {
       this.ttsParagraphs = reader.getTtsParagraphs()
       if (!this.ttsParagraphs.length) return
 
+      // -1 means "start from first visible paragraph"
+      if (fromIndex < 0) {
+        fromIndex = reader.getFirstVisibleParagraphIndex(this.ttsParagraphs)
+      }
       this.ttsCurrentIndex = Math.min(fromIndex, this.ttsParagraphs.length - 1)
       this.ttsPlaying = true
       this.ttsPaused = false
