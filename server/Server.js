@@ -521,12 +521,52 @@ class Server {
       if (!fp) return res.status(404).json({ error: 'No fingerprint' })
 
       const model = req.body.model || 'impish-bloodmoon'
-      const promptVersion = req.body.promptVersion || 'v1'
+      const depth = req.body.depth || 'standard' // 'standard' or 'deep'
+      const promptVersion = req.body.promptVersion || 'v2'
 
-      const topWords = (fp.distinctiveWords || []).slice(0, 10).map(w => w.word).join(', ')
-      const excerptText = (fp.excerpts || []).map(e => `--- ${e.label} ---\n${e.text}`).join('\n\n')
+      let prompt
+      if (depth === 'deep') {
+        // Deep analysis: feed as much text as will fit (~25K words)
+        // Re-extract full text for deep mode
+        const libraryItem = await Database.libraryItemModel.findByPk(req.params.id, {
+          include: [{ model: Database.bookModel, required: false }]
+        })
+        const book = libraryItem?.book || libraryItem?.media
+        const ebookFile = book?.ebookFile
+        let bookText = ''
+        if (ebookFile?.metadata?.path) {
+          try {
+            const { fullText } = await extractEpubText(ebookFile.metadata.path)
+            // Take first ~20K words (~27K tokens — fits 4090 24GB with 20B model)
+            const words = fullText.split(/\s+/)
+            const maxWords = 20000
+            bookText = words.slice(0, maxWords).join(' ')
+            if (words.length > maxWords) bookText += `\n\n[... ${words.length - maxWords} more words truncated ...]`
+          } catch (e) {
+            Logger.error('[Fingerprint] Deep text extraction failed:', e.message)
+          }
+        }
 
-      const prompt = `Analyze this book based on the excerpts and metrics below. Write a 4-6 sentence description covering:
+        const topWords = (fp.distinctiveWords || []).slice(0, 15).map(w => w.word).join(', ')
+        prompt = `You are a literary critic with deep knowledge of genre fiction. Read the following substantial excerpt from "${fp.title}" by ${fp.author} and write a thorough analysis (3-4 paragraphs) covering:
+
+1. SETTING & PREMISE: What world is this? What's the central conflict or question driving the narrative? Be specific about the setting details you find in the text.
+2. PROSE & STYLE: How does the author write? Is it dense, spare, ornate, conversational? How does the sentence structure feel? What's distinctive about the voice?
+3. THEMES & TONE: What ideas is the book wrestling with? What's the emotional register — bleak, hopeful, sardonic, reverent? Give specific examples from the text.
+4. COMPARABLE WORKS & AUDIENCE: Who is this for? What other books does it remind you of, and be specific about WHY (don't just name-drop). What kind of reader would love this vs. bounce off it?
+
+Do not summarize the plot. Do not spoil. Write as a thoughtful critic, not a marketing blurb. Be specific — reference actual passages, character names, and stylistic choices you observe in the text.
+
+Distinctive vocabulary: ${topWords}
+Stats: ${fp.totalWords} total words, ${Math.round(fp.dialogueRatio * 100)}% dialogue, vocab density ${fp.vocabDensity}
+
+--- BOOK TEXT ---
+${bookText}`
+      } else {
+        // Standard analysis: excerpts only
+        const topWords = (fp.distinctiveWords || []).slice(0, 10).map(w => w.word).join(', ')
+        const excerptText = (fp.excerpts || []).map(e => `--- ${e.label} ---\n${e.text}`).join('\n\n')
+        prompt = `Analyze this book based on the excerpts and metrics below. Write a 4-6 sentence description covering:
 - What the book is about (setting, central tension, themes) without spoilers
 - What the prose feels like to read (dense? propulsive? literary? pulpy?)
 - The tone and atmosphere
@@ -539,21 +579,23 @@ Total words: ${fp.totalWords} | ${fp.dialogueRatio ? Math.round(fp.dialogueRatio
 Distinctive words: ${topWords}
 
 ${excerptText}`
+      }
 
       try {
         const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
           model,
           messages: [{ role: 'user', content: prompt }],
           stream: false
-        }, { timeout: 120000 })
+        }, { timeout: 600000 }) // 10 min timeout for deep analysis
 
         const summary = resp.data?.message?.content || ''
         fp.styleSummary = summary.trim()
         fp.styleSummaryModel = model
         fp.styleSummaryPromptVersion = promptVersion
+        fp.styleSummaryDepth = depth
         saveFingerprints()
 
-        res.json({ styleSummary: fp.styleSummary, model, promptVersion })
+        res.json({ styleSummary: fp.styleSummary, model, promptVersion, depth })
       } catch (e) {
         res.status(502).json({ error: 'Ollama not reachable: ' + e.message })
       }

@@ -143,9 +143,13 @@
             </div>
             <div v-if="bookFingerprint">
               <p v-if="bookFingerprint.styleSummary" class="text-sm text-gray-300 mb-3">{{ bookFingerprint.styleSummary }}</p>
-              <div class="flex items-center gap-2 mb-3">
+              <div class="flex items-center gap-2 mb-3 flex-wrap">
                 <select v-model="summaryModel" class="text-xs bg-primary border border-gray-600/40 rounded px-2 py-1">
                   <option v-for="m in ollamaModels" :key="m" :value="m">{{ m }}</option>
+                </select>
+                <select v-model="summaryDepth" class="text-xs bg-primary border border-gray-600/40 rounded px-2 py-1">
+                  <option value="standard">Standard (excerpts)</option>
+                  <option value="deep">Deep (~20K words)</option>
                 </select>
                 <button @click="generateSummary" class="text-xs px-2 py-1 rounded border border-blue-500/40 hover:bg-blue-500/20" :disabled="summaryLoading">
                   {{ summaryLoading ? 'Generating...' : (bookFingerprint.styleSummary ? 'Regenerate' : 'Generate summary') }}
@@ -249,6 +253,7 @@ export default {
       summaryLoading: false,
       summaryAbort: null,
       summaryModel: '',
+      summaryDepth: 'standard',
       ollamaModels: [],
       similarBooks: []
     }
@@ -546,8 +551,9 @@ export default {
       this.summaryAbort = controller
       try {
         const resp = await this.$axios.$post(`/api/items/${this.libraryItemId}/fingerprint/summary`, {
-          model: this.summaryModel
-        }, { signal: controller.signal })
+          model: this.summaryModel,
+          depth: this.summaryDepth
+        }, { signal: controller.signal, timeout: 600000 })
         if (this.bookFingerprint) {
           this.bookFingerprint.styleSummary = resp.styleSummary
           this.bookFingerprint.styleSummaryModel = resp.model
