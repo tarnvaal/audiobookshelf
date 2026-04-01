@@ -915,6 +915,12 @@ export default {
         first = mgr.views.first()
       }
 
+      // Disable trim and check BEFORE restoring navigation — otherwise
+      // display() triggers the layout pipeline which calls check() and
+      // hits views.length as a function (broken in patched state)
+      mgr.trim = function () { return Promise.resolve() }
+      mgr.check = function () { return Promise.resolve(false) }
+
       // Restore counter
       mgr.counter = origCounter
 
@@ -924,17 +930,24 @@ export default {
         scroller.addEventListener('scroll', origOnScroll)
       }
 
-      // Navigate back to where we were — all sections are loaded now so
-      // check() won't prepend anything and counter() won't fire
+      // Scroll back to where we were — find the element via CFI and scroll directly
       if (currentCfi) {
-        await this.rendition.display(currentCfi)
+        try {
+          const range = this.rendition.getRange(currentCfi)
+          if (range) {
+            const rect = range.getBoundingClientRect()
+            const iframe = range.startContainer?.ownerDocument?.defaultView?.frameElement
+            if (iframe && mgr.container) {
+              const iframeRect = iframe.getBoundingClientRect()
+              const containerRect = mgr.container.getBoundingClientRect()
+              const targetScroll = mgr.container.scrollTop + (iframeRect.top + rect.top - containerRect.top)
+              mgr.container.scrollTo({ top: targetScroll })
+            }
+          }
+        } catch (e) {
+          console.warn('[patchContinuousManager] Could not scroll to CFI:', e)
+        }
       }
-
-      // Disable trim and check so sections never get removed or re-added
-      mgr.trim = function () { return Promise.resolve() }
-
-      // Replace check to be a no-op since everything is loaded
-      mgr.check = function () { return Promise.resolve(false) }
 
       console.log('[patchContinuousManager] Pre-loaded all', mgr.views.length(), 'spine items')
     },
