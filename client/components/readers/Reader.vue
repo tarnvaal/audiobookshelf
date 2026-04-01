@@ -16,6 +16,10 @@
         <span class="material-symbols text-1.5xl">bookmarks</span>
         <span class="text-xs ml-0.5 mt-1">{{ ebookBookmarks.length }}</span>
       </button>
+      <button v-if="isEpub && vocabList.length" @click="toggleVocabPanel" type="button" aria-label="Vocabulary" class="ml-2 inline-flex opacity-80 hover:opacity-100">
+        <span class="material-symbols text-1.5xl">dictionary</span>
+        <span class="text-xs ml-0.5 mt-1">{{ vocabList.length }}</span>
+      </button>
       <button v-if="isEpub" @click="ttsToggle" type="button" aria-label="Read aloud" class="ml-4 inline-flex opacity-80 hover:opacity-100" :title="ttsPlaying ? 'Pause' : (ttsPaused ? 'Resume' : 'Read aloud')">
         <span class="material-symbols text-1.5xl" :class="(ttsPlaying || ttsPaused) ? 'text-blue-400' : ''">{{ ttsPlaying ? 'pause' : 'play_arrow' }}</span>
       </button>
@@ -49,7 +53,21 @@
       </button>
     </div>
 
-    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" @tts-start-from="ttsStartFrom" />
+    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" @tts-start-from="ttsStartFrom" @word-selected="onWordSelected" />
+
+    <!-- Word definition popover -->
+    <readers-word-popover
+      :visible="!!vocabPopover"
+      :word="vocabPopover ? vocabPopover.word : ''"
+      :definitions="vocabPopover ? vocabPopover.definitions : []"
+      :loading="vocabLoading"
+      :saved="vocabPopover ? isWordSaved(vocabPopover.word) : false"
+      :x="vocabPopover ? vocabPopover.x : 0"
+      :y="vocabPopover ? vocabPopover.y : 0"
+      :theme="ereaderTheme"
+      @close="vocabPopover = null"
+      @save="saveVocabWord"
+    />
 
     <!-- Reading status bar -->
     <div v-if="readingStatus && isEpub" class="absolute bottom-0 left-0 w-full z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" :class="ereaderTheme === 'dark' ? 'bg-primary/90 text-gray-400' : ereaderTheme === 'sepia' ? 'bg-[rgb(230,222,202)]/90 text-[#5b4636]/70' : 'bg-white/90 text-gray-500'">
@@ -135,6 +153,31 @@
               <p v-if="bm.preview" class="text-xs opacity-40 mt-0.5 italic" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ bm.preview }}</p>
             </div>
             <button @click.stop="removeBookmark(bm.cfi)" class="ml-2 opacity-50 hover:opacity-100 shrink-0">
+              <span class="material-symbols text-sm">delete</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vocabulary panel (right side) -->
+    <div v-if="vocabPanelOpen && isEpub" class="w-80 h-full max-h-full absolute top-0 right-0 shadow-xl z-30 group-data-[theme=dark]:bg-primary group-data-[theme=dark]:text-white group-data-[theme=light]:bg-white group-data-[theme=light]:text-black group-data-[theme=sepia]:bg-[rgb(244,236,216)] group-data-[theme=sepia]:text-[#5b4636]">
+      <div class="flex flex-col p-4 h-full">
+        <div class="flex items-center mb-3">
+          <button @click="toggleVocabPanel" type="button" class="inline-flex opacity-80 hover:opacity-100">
+            <span class="material-symbols text-2xl">close</span>
+          </button>
+          <p class="text-lg font-semibold ml-2">Vocabulary ({{ vocabList.length }})</p>
+        </div>
+        <div v-if="!vocabList.length" class="text-sm opacity-60 py-4 text-center">No saved words yet. Select a word while reading to look it up.</div>
+        <div class="overflow-y-auto flex-1">
+          <div v-for="(item, idx) in vocabList" :key="idx" class="flex items-start justify-between py-2 border-b border-gray-700/30">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold">{{ item.word }}</p>
+              <p class="text-xs opacity-50 italic">{{ item.pos }}</p>
+              <p class="text-xs opacity-70 mt-0.5">{{ item.definition }}</p>
+            </div>
+            <button @click="removeVocabWord(idx)" class="ml-2 opacity-50 hover:opacity-100 shrink-0">
               <span class="material-symbols text-sm">delete</span>
             </button>
           </div>
@@ -347,6 +390,11 @@ export default {
       rangeEnd: 10,
       rangeChapters: [],
       rangePreviewLength: 0,
+      // Vocabulary
+      vocabPopover: null,
+      vocabLoading: false,
+      vocabList: [],
+      vocabPanelOpen: false,
       // TTS state
       ttsPlaying: false,
       ttsPaused: false,
@@ -585,6 +633,7 @@ export default {
     readerMounted() {
       if (this.isEpub) {
         this.loadEreaderSettings()
+        this._loadVocabList()
       }
     },
     settingsUpdated() {
@@ -608,6 +657,54 @@ export default {
     },
     toggleBookmarksPanel() {
       this.bookmarksPanelOpen = !this.bookmarksPanelOpen
+    },
+    // ── Vocabulary ──
+    toggleVocabPanel() {
+      this.vocabPanelOpen = !this.vocabPanelOpen
+    },
+    async onWordSelected({ word, x, y }) {
+      this.vocabLoading = true
+      this.vocabPopover = { word, x, y, definitions: [] }
+      try {
+        const resp = await this.$axios.$get(`/api/dictionary/${encodeURIComponent(word)}`)
+        if (this.vocabPopover?.word === word) {
+          this.vocabPopover.definitions = resp.definitions || []
+        }
+      } catch (e) {
+        if (this.vocabPopover?.word === word) {
+          this.vocabPopover.definitions = []
+        }
+      }
+      this.vocabLoading = false
+    },
+    saveVocabWord(word, def) {
+      if (this.isWordSaved(word)) return
+      this.vocabList.push({
+        word,
+        definition: def?.definition || '',
+        pos: def?.pos || '',
+        addedAt: Date.now()
+      })
+      this._saveVocabList()
+    },
+    removeVocabWord(idx) {
+      this.vocabList.splice(idx, 1)
+      this._saveVocabList()
+    },
+    isWordSaved(word) {
+      return this.vocabList.some(v => v.word === word)
+    },
+    _saveVocabList() {
+      const key = `ebookVocab-${this.selectedLibraryItem?.id}`
+      localStorage.setItem(key, JSON.stringify(this.vocabList))
+    },
+    _loadVocabList() {
+      const key = `ebookVocab-${this.selectedLibraryItem?.id}`
+      try {
+        this.vocabList = JSON.parse(localStorage.getItem(key)) || []
+      } catch (e) {
+        this.vocabList = []
+      }
     },
     goToBookmark(cfi) {
       this.$refs.readerComponent?.goToBookmark?.(cfi)

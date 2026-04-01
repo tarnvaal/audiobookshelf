@@ -790,6 +790,15 @@ export default {
           }
           container.addEventListener('wheel', this._wheelHandler, { passive: false })
 
+          // Word selection for vocabulary lookup
+          container.addEventListener('mouseup', (e) => {
+            const selection = window.getSelection()
+            if (!selection || selection.isCollapsed) return
+            const word = selection.toString().trim()
+            if (!word || word.includes(' ') || word.length > 30) return
+            this.$emit('word-selected', { word: word.toLowerCase(), x: e.clientX, y: e.clientY })
+          })
+
           // Touch events
           container.addEventListener('touchstart', (e) => this.$emit('touchstart', e))
           container.addEventListener('touchend', (e) => this.$emit('touchend', e))

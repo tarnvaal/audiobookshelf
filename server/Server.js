@@ -379,6 +379,32 @@ class Server {
       }
     })
 
+    // ── Dictionary (WordNet) ──
+    const sqlite3Dict = require('sqlite3')
+    const DICT_DB_PATH = Path.join(global.ConfigPath, 'wordnet.sqlite')
+    let dictDb = null
+    function getDictDb() {
+      if (dictDb) return dictDb
+      if (!fs.existsSync(DICT_DB_PATH)) return null
+      dictDb = new sqlite3Dict.Database(DICT_DB_PATH, sqlite3Dict.OPEN_READONLY)
+      return dictDb
+    }
+
+    router.get('/api/dictionary/:word', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const db = getDictDb()
+      if (!db) return res.status(503).json({ error: 'Dictionary not available. Place wordnet.sqlite in config directory.' })
+      const word = req.params.word.toLowerCase().trim().replace(/[^a-z\s-]/g, '')
+      if (!word) return res.json({ word: req.params.word, definitions: [] })
+      db.all(
+        'SELECT pos, definition FROM definitions WHERE word = ? LIMIT 8',
+        [word],
+        (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message })
+          res.json({ word, definitions: rows || [] })
+        }
+      )
+    })
+
     // Static folder
     router.use(express.static(Path.join(global.appRoot, 'static')))
 
