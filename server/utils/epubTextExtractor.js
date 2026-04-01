@@ -79,7 +79,9 @@ async function extractEpubText(epubPath) {
 function stripHtmlTags(html) {
   // Remove everything inside <head>...</head>
   let text = html.replace(/<head[\s>][\s\S]*?<\/head>/gi, '')
-  // Remove all HTML tags
+  // Insert paragraph breaks before block elements
+  text = text.replace(/<\/?(?:p|div|br|h[1-6]|li|blockquote|tr)[^>]*>/gi, '\n\n')
+  // Remove remaining HTML tags
   text = text.replace(/<[^>]+>/g, ' ')
   // Decode common entities
   text = text.replace(/&nbsp;/g, ' ')
@@ -89,10 +91,10 @@ function stripHtmlTags(html) {
     .replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(parseInt(n)))
     .replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCharCode(parseInt(n, 16)))
-  // Collapse whitespace
-  text = text.replace(/\s+/g, ' ').trim()
-  // Restore paragraph breaks (approximate from block elements)
-  return text
+  // Collapse inline whitespace but preserve paragraph breaks
+  text = text.replace(/[^\S\n]+/g, ' ')
+  text = text.replace(/\n\s*\n/g, '\n\n')
+  return text.trim()
 }
 
 module.exports = { extractEpubText }

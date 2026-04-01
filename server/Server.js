@@ -504,7 +504,7 @@ class Server {
       const fp = fingerprints[req.params.id]
       if (!fp) return res.status(404).json({ error: 'No fingerprint' })
 
-      const model = req.body.model || 'llama3'
+      const model = req.body.model || 'impish-bloodmoon'
       const promptVersion = req.body.promptVersion || 'v1'
 
       const topWords = (fp.distinctiveWords || []).slice(0, 5).map(w => w.word).join(', ')

@@ -527,7 +527,7 @@ export default {
       this.summaryLoading = true
       try {
         const resp = await this.$axios.$post(`/api/items/${this.libraryItemId}/fingerprint/summary`, {
-          model: 'llama3'
+          model: 'impish-bloodmoon'
         })
         if (this.bookFingerprint) {
           this.bookFingerprint.styleSummary = resp.styleSummary
