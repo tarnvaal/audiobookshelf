@@ -49,7 +49,7 @@
       </button>
     </div>
 
-    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" @tts-start-from="ttsStartFrom" @reflowed="onReflowed" />
+    <component v-if="componentName" ref="readerComponent" :is="componentName" :library-item="selectedLibraryItem" :player-open="!!streamLibraryItem" :keep-progress="keepProgress" :file-id="ebookFileId" @touchstart="touchstart" @touchend="touchend" @hook:mounted="readerMounted" @reading-status="onReadingStatus" @bookmarks-updated="onBookmarksUpdated" @tts-start-from="ttsStartFrom" />
 
     <!-- Reading status bar -->
     <div v-if="readingStatus && isEpub" class="absolute bottom-0 left-0 w-full z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" :class="ereaderTheme === 'dark' ? 'bg-primary/90 text-gray-400' : ereaderTheme === 'sepia' ? 'bg-[rgb(230,222,202)]/90 text-[#5b4636]/70' : 'bg-white/90 text-gray-500'">
@@ -496,10 +496,7 @@ export default {
       }
     },
     componentName() {
-      if (this.ebookType === 'epub') {
-        const useLegacy = localStorage.getItem('useLegacyRenderer') === 'true'
-        return useLegacy ? 'readers-epub-reader' : 'readers-epub-reader-new'
-      }
+      if (this.ebookType === 'epub') return 'readers-epub-reader'
       else if (this.ebookType === 'mobi') return 'readers-mobi-reader'
       else if (this.ebookType === 'pdf') return 'readers-pdf-reader'
       else if (this.ebookType === 'comic') return 'readers-comic-reader'
@@ -1130,24 +1127,6 @@ export default {
         speed: this.ttsSpeed,
         voice: this.ttsVoice
       }))
-    },
-    onReflowed() {
-      // Debounce — reflow can fire multiple times in quick succession
-      clearTimeout(this._ttsReflowTimer)
-      this._ttsReflowTimer = setTimeout(() => this.ttsRefreshAfterReflow(), 300)
-    },
-    ttsRefreshAfterReflow() {
-      if (!this.ttsPlaying && !this.ttsPaused) return
-      const reader = this.$refs.readerComponent
-      if (!reader) return
-      const oldIndex = this.ttsCurrentIndex
-      this.ttsParagraphs = reader.getTtsParagraphs()
-      this.ttsCurrentIndex = Math.min(oldIndex, this.ttsParagraphs.length - 1)
-      const para = this.ttsParagraphs[this.ttsCurrentIndex]
-      if (para?.el) {
-        reader.ttsHighlight(para.el)
-      }
-      reader.ttsInstallClickHandlers()
     },
     // ── end TTS methods ──
     toggleToC() {
