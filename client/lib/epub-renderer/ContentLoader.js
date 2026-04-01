@@ -31,7 +31,10 @@ export default class ContentLoader {
     await section.load(this.book.load.bind(this.book))
 
     const doc = section.document
-    if (!doc?.body) {
+    // epub.js parses XHTML as XML — doc.body may not exist on XML documents
+    const body = doc?.body || doc?.querySelector('body')
+    if (!body) {
+      console.warn(`[ContentLoader] No body found for spine item ${index}`)
       return { spineIndex: index, href: section.href, html: '', styles: [], section }
     }
 
@@ -39,18 +42,18 @@ export default class ContentLoader {
     const styles = this._extractStyles(doc, section.url)
 
     // Rewrite resource URLs in the body
-    this._rewriteUrls(doc.body, section.url)
+    this._rewriteUrls(body, section.url)
 
     // Strip scripts if not allowed
     if (!this.allowScriptedContent) {
-      this._stripScripts(doc.body)
+      this._stripScripts(body)
     }
 
     // Mark decorative/non-speakable paragraphs for TTS
-    this._markDecorativeContent(doc.body)
+    this._markDecorativeContent(body)
 
     // Serialize body innerHTML
-    const html = this._serializeBody(doc.body)
+    const html = this._serializeBody(body)
 
     return { spineIndex: index, href: section.href, html, styles, section }
   }
