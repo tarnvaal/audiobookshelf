@@ -379,6 +379,253 @@ class Server {
       }
     })
 
+    // ── Dictionary (WordNet) ──
+    const sqlite3Dict = require('sqlite3')
+    const DICT_DB_PATH = Path.join(global.ConfigPath, 'wordnet.sqlite')
+    let dictDb = null
+    function getDictDb() {
+      if (dictDb) return dictDb
+      if (!fs.existsSync(DICT_DB_PATH)) return null
+      dictDb = new sqlite3Dict.Database(DICT_DB_PATH, sqlite3Dict.OPEN_READONLY)
+      return dictDb
+    }
+
+    router.get('/api/dictionary/:word', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const db = getDictDb()
+      if (!db) return res.status(503).json({ error: 'Dictionary not available. Place wordnet.sqlite in config directory.' })
+      const word = req.params.word.toLowerCase().trim().replace(/[^a-z\s-]/g, '')
+      if (!word) return res.json({ word: req.params.word, definitions: [] })
+      db.all(
+        'SELECT pos, definition FROM definitions WHERE word = ? LIMIT 8',
+        [word],
+        (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message })
+          res.json({ word, definitions: rows || [] })
+        }
+      )
+    })
+
+    // ── Book DNA Fingerprinting ──
+    const { extractEpubText } = require('./utils/epubTextExtractor')
+    const { computeFingerprint, cosineSimilarity, normalizeVectors } = require('./utils/bookFingerprint')
+
+    // In-memory fingerprint store (persisted to JSON file)
+    const FINGERPRINT_PATH = Path.join(global.ConfigPath, 'book-fingerprints.json')
+    let fingerprints = {}
+    try {
+      if (fs.existsSync(FINGERPRINT_PATH)) {
+        fingerprints = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, 'utf8'))
+      }
+    } catch (e) {
+      Logger.error('[Fingerprint] Failed to load fingerprints:', e.message)
+    }
+    function saveFingerprints() {
+      fs.writeFileSync(FINGERPRINT_PATH, JSON.stringify(fingerprints, null, 2))
+    }
+
+    // Trigger analysis
+    router.post('/api/items/:id/fingerprint', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const libraryItem = await Database.libraryItemModel.findByPk(req.params.id, {
+          include: [{ model: Database.bookModel, required: false }]
+        })
+        if (!libraryItem) return res.status(404).json({ error: 'Item not found' })
+
+        const book = libraryItem.book || libraryItem.media
+        const ebookFile = book?.ebookFile
+        if (!ebookFile?.metadata?.path) return res.status(400).json({ error: 'No ebook file' })
+
+        const epubPath = ebookFile.metadata.path
+        if (!epubPath.endsWith('.epub')) return res.status(400).json({ error: 'Not an epub file' })
+
+        Logger.info(`[Fingerprint] Extracting text from: ${epubPath}`)
+        const { chapters, fullText, totalWords } = await extractEpubText(epubPath)
+        Logger.info(`[Fingerprint] Extracted ${chapters.length} chapters, ${totalWords} words`)
+        const metrics = computeFingerprint(fullText, chapters)
+        if (!metrics) return res.status(400).json({ error: `Not enough text to analyze (${totalWords} words from ${chapters.length} chapters)` })
+
+        const title = book?.title || book?.metadata?.title || 'Unknown'
+        const author = book?.authorName || book?.metadata?.authorName || 'Unknown'
+
+        // Extract text samples for LLM analysis
+        const excerpts = []
+        // Opening (first 500 words from first chapter with real content)
+        const firstChapter = chapters.find(c => c.text.length > 200)
+        if (firstChapter) excerpts.push({ label: 'Opening', text: firstChapter.text.split(/\s+/).slice(0, 500).join(' ') })
+        // Mid-point (500 words from the middle chapter)
+        const midChapter = chapters[Math.floor(chapters.length / 2)]
+        if (midChapter) excerpts.push({ label: 'Mid-point', text: midChapter.text.split(/\s+/).slice(0, 500).join(' ') })
+        // A dialogue-heavy passage (find the chapter with most quote marks)
+        const dialogueChapter = chapters.reduce((best, ch) => {
+          const quotes = (ch.text.match(/[""\u201C\u201D]/g) || []).length
+          return quotes > (best.quotes || 0) ? { ...ch, quotes } : best
+        }, { quotes: 0 })
+        if (dialogueChapter.text) excerpts.push({ label: 'Dialogue sample', text: dialogueChapter.text.split(/\s+/).slice(0, 400).join(' ') })
+
+        fingerprints[req.params.id] = {
+          libraryItemId: req.params.id,
+          title,
+          author,
+          ...metrics,
+          excerpts,
+          styleSummary: null,
+          styleSummaryModel: null,
+          styleSummaryPromptVersion: null,
+          styleSummaryRating: null,
+          analyzedAt: new Date().toISOString()
+        }
+        saveFingerprints()
+
+        res.json(fingerprints[req.params.id])
+      } catch (e) {
+        Logger.error('[Fingerprint] Analysis failed:', e.message)
+        res.status(500).json({ error: e.message })
+      }
+    })
+
+    // Get fingerprint
+    router.get('/api/items/:id/fingerprint', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const fp = fingerprints[req.params.id]
+      if (!fp) return res.status(404).json({ error: 'No fingerprint' })
+      res.json(fp)
+    })
+
+    // Get similar books
+    router.get('/api/items/:id/similar', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const target = fingerprints[req.params.id]
+      if (!target) return res.status(404).json({ error: 'No fingerprint for this book' })
+
+      const allFps = Object.values(fingerprints).filter(f => f.libraryItemId !== req.params.id && f.vector)
+      if (allFps.length === 0) return res.json([])
+
+      // Normalize and compute similarity
+      const withTarget = [target, ...allFps]
+      const normalized = normalizeVectors(withTarget)
+      const targetNorm = normalized[0].normalizedVector
+
+      const similar = normalized.slice(1).map(f => ({
+        libraryItemId: f.libraryItemId,
+        title: f.title,
+        author: f.author,
+        similarity: cosineSimilarity(targetNorm, f.normalizedVector)
+      }))
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 5)
+
+      res.json(similar)
+    })
+
+    // Generate/regenerate style summary via Ollama
+    router.post('/api/items/:id/fingerprint/summary', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      const fp = fingerprints[req.params.id]
+      if (!fp) return res.status(404).json({ error: 'No fingerprint' })
+
+      const model = req.body.model || 'impish-bloodmoon'
+      const depth = req.body.depth || 'standard' // 'standard' or 'deep'
+      const promptVersion = req.body.promptVersion || 'v2'
+
+      let prompt
+      if (depth === 'deep') {
+        // Deep analysis: feed as much text as will fit (~25K words)
+        // Re-extract full text for deep mode
+        const libraryItem = await Database.libraryItemModel.findByPk(req.params.id, {
+          include: [{ model: Database.bookModel, required: false }]
+        })
+        const book = libraryItem?.book || libraryItem?.media
+        const ebookFile = book?.ebookFile
+        let bookText = ''
+        if (ebookFile?.metadata?.path) {
+          try {
+            const { fullText } = await extractEpubText(ebookFile.metadata.path)
+            // Take first ~20K words (~27K tokens — fits 4090 24GB with 20B model)
+            const words = fullText.split(/\s+/)
+            const maxWords = 10000
+            bookText = words.slice(0, maxWords).join(' ')
+            if (words.length > maxWords) bookText += `\n\n[... ${words.length - maxWords} more words truncated ...]`
+          } catch (e) {
+            Logger.error('[Fingerprint] Deep text extraction failed:', e.message)
+          }
+        }
+
+        const topWords = (fp.distinctiveWords || []).slice(0, 15).map(w => w.word).join(', ')
+        prompt = `You are a literary critic. Read the following excerpt from "${fp.title}" by ${fp.author} and write a thorough analysis in 3-4 plain text paragraphs. Do NOT use markdown, headers, bold, italic, bullet points, or numbered lists. Write in flowing prose only.
+
+Paragraph 1 — SETTING & PREMISE: What world is this? What's the central conflict or question? Be specific about setting details from the text.
+
+Paragraph 2 — PROSE & STYLE: How does the author write? Dense, spare, ornate, conversational? What's distinctive about the voice? Reference specific passages.
+
+Paragraph 3 — THEMES & TONE: What ideas is the book wrestling with? What's the emotional register? Give examples from the text.
+
+Paragraph 4 — CONTENT & INTENSITY: How graphic is the violence, sexuality, or dark subject matter? What content should a reader be prepared for? Be specific about what's in the text without moralizing.
+
+Do not summarize the plot. Do not spoil. Do not use markdown formatting of any kind — no asterisks, no headers, no bold, no italic. Plain text paragraphs only.
+
+Distinctive vocabulary: ${topWords}
+Stats: ${fp.totalWords} total words, ${Math.round(fp.dialogueRatio * 100)}% dialogue, vocab density ${fp.vocabDensity}
+
+--- BOOK TEXT ---
+${bookText}`
+      } else {
+        // Standard analysis: excerpts only
+        const topWords = (fp.distinctiveWords || []).slice(0, 10).map(w => w.word).join(', ')
+        const excerptText = (fp.excerpts || []).map(e => `--- ${e.label} ---\n${e.text}`).join('\n\n')
+        prompt = `Analyze this book based on the excerpts and metrics below. Write a 4-6 sentence description covering:
+- What the book is about (setting, central tension, themes) without spoilers
+- What the prose feels like to read (dense? propulsive? literary? pulpy?)
+- The tone and atmosphere
+- Who would enjoy it
+
+Do not list metrics. Do not start with the title. Write naturally as if recommending the book to someone who's never heard of it.
+
+Book: "${fp.title}" by ${fp.author}
+Total words: ${fp.totalWords} | ${fp.dialogueRatio ? Math.round(fp.dialogueRatio * 100) : 0}% dialogue | Vocab density: ${fp.vocabDensity}
+Distinctive words: ${topWords}
+
+${excerptText}`
+      }
+
+      try {
+        const promptWords = prompt.split(/\s+/).length
+        Logger.info(`[Fingerprint] Generating ${depth} summary with ${model}, ~${promptWords} words in prompt`)
+        const startTime = Date.now()
+
+        const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false
+        }, { timeout: 600000 })
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        let summary = resp.data?.message?.content || ''
+        // Strip markdown formatting that LLMs love to insert
+        summary = summary.replace(/\*\*([^*]+)\*\*/g, '$1')  // **bold**
+          .replace(/\*([^*]+)\*/g, '$1')   // *italic*
+          .replace(/^#+\s+/gm, '')          // ## headers
+          .replace(/^[-*]\s+/gm, '')        // - bullet points
+          .replace(/^\d+\.\s+/gm, '')       // 1. numbered lists
+        Logger.info(`[Fingerprint] Summary generated in ${elapsed}s (${summary.split(/\s+/).length} words output)`)
+
+        fp.styleSummary = summary.trim()
+        fp.styleSummaryModel = model
+        fp.styleSummaryPromptVersion = promptVersion
+        fp.styleSummaryDepth = depth
+        saveFingerprints()
+
+        res.json({ styleSummary: fp.styleSummary, model, promptVersion, depth })
+      } catch (e) {
+        res.status(502).json({ error: 'Ollama not reachable: ' + e.message })
+      }
+    })
+
+    // Save rating
+    router.patch('/api/items/:id/fingerprint/rating', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const fp = fingerprints[req.params.id]
+      if (!fp) return res.status(404).json({ error: 'No fingerprint' })
+      fp.styleSummaryRating = req.body.rating
+      saveFingerprints()
+      res.json({ rating: fp.styleSummaryRating })
+    })
+
     // Static folder
     router.use(express.static(Path.join(global.appRoot, 'static')))
 

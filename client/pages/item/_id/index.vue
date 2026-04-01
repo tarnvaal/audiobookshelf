@@ -132,6 +132,67 @@
             <button v-if="isDescriptionClamped" class="py-0.5 flex items-center text-slate-300 hover:text-white" @click="showFullDescription = !showFullDescription">{{ showFullDescription ? $strings.ButtonReadLess : $strings.ButtonReadMore }} <span class="material-symbols text-xl pl-1" v-html="showFullDescription ? 'expand_less' : '&#xe313;'" /></button>
           </div>
 
+          <!-- Book DNA -->
+          <div v-if="isBook && !isPodcast" class="mt-6">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-lg font-semibold">Book DNA</h3>
+              <button v-if="!bookFingerprint && !fingerprintLoading" @click="analyzeBook" class="text-xs px-2 py-1 rounded border border-blue-500/40 hover:bg-blue-500/20">
+                Analyze
+              </button>
+              <span v-if="fingerprintLoading" class="text-xs opacity-50">Analyzing...</span>
+            </div>
+            <div v-if="bookFingerprint">
+              <p v-if="bookFingerprint.styleSummary" class="text-sm text-gray-300 mb-3">{{ bookFingerprint.styleSummary }}</p>
+              <div class="flex items-center gap-2 mb-3 flex-wrap">
+                <select v-model="summaryModel" class="text-xs bg-primary border border-gray-600/40 rounded px-2 py-1">
+                  <option v-for="m in ollamaModels" :key="m" :value="m">{{ m }}</option>
+                </select>
+                <select v-model="summaryDepth" class="text-xs bg-primary border border-gray-600/40 rounded px-2 py-1">
+                  <option value="standard">Standard (excerpts)</option>
+                  <option value="deep">Deep (~10K words)</option>
+                </select>
+                <button @click="generateSummary" class="text-xs px-2 py-1 rounded border border-blue-500/40 hover:bg-blue-500/20" :disabled="summaryLoading">
+                  {{ summaryLoading ? 'Generating...' : (bookFingerprint.styleSummary ? 'Regenerate' : 'Generate summary') }}
+                </button>
+                <button v-if="summaryLoading" @click="cancelSummary" class="text-xs px-2 py-1 rounded border border-red-500/40 hover:bg-red-500/20">
+                  Cancel
+                </button>
+              </div>
+
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs mb-3">
+                <div v-for="metric in fingerprintMetrics" :key="metric.label">
+                  <div class="flex justify-between opacity-60 mb-0.5">
+                    <span>{{ metric.label }}</span>
+                    <span>{{ metric.value }}</span>
+                  </div>
+                  <div class="h-1.5 bg-gray-700 rounded">
+                    <div class="h-full bg-blue-500/60 rounded" :style="{ width: metric.pct + '%' }"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="bookFingerprint.distinctiveWords" class="text-xs opacity-50 mb-3">
+                <span class="font-semibold">Distinctive words:</span>
+                {{ bookFingerprint.distinctiveWords.slice(0, 10).map(w => w.word).join(', ') }}
+              </div>
+
+              <div v-if="similarBooks.length" class="mt-4">
+                <h4 class="text-sm font-semibold mb-2">Books like this</h4>
+                <div v-for="sim in similarBooks" :key="sim.libraryItemId" class="flex items-center gap-2 py-1 text-sm">
+                  <nuxt-link :to="`/item/${sim.libraryItemId}`" class="hover:underline">{{ sim.title }}</nuxt-link>
+                  <span class="text-xs opacity-50">by {{ sim.author }}</span>
+                  <span class="text-xs opacity-40 ml-auto">{{ Math.round(sim.similarity * 100) }}%</span>
+                </div>
+              </div>
+
+              <div v-if="bookFingerprint.styleSummary" class="flex items-center gap-1 mt-2 text-xs opacity-50">
+                <span>Rating:</span>
+                <button v-for="n in 5" :key="n" @click="rateFingerprint(n)" class="hover:text-yellow-400" :class="n <= (bookFingerprint.styleSummaryRating || 0) ? 'text-yellow-400' : 'text-gray-500'">&#9733;</button>
+                <span v-if="bookFingerprint.styleSummaryModel" class="ml-2 opacity-60">via {{ bookFingerprint.styleSummaryModel }}</span>
+              </div>
+            </div>
+          </div>
+
           <tables-chapters-table v-if="chapters.length" :library-item="libraryItem" class="mt-6" />
 
           <tables-tracks-table v-if="tracks.length" :title="$strings.LabelStatsAudioTracks" :tracks="tracksWithAudioFile" :is-file="isFile" :library-item-id="libraryItemId" class="mt-6" />
@@ -186,7 +247,15 @@ export default {
       episodeDownloadsQueued: [],
       showBookmarksModal: false,
       isDescriptionClamped: false,
-      showFullDescription: false
+      showFullDescription: false,
+      bookFingerprint: null,
+      fingerprintLoading: false,
+      summaryLoading: false,
+      summaryAbort: null,
+      summaryModel: '',
+      summaryDepth: 'standard',
+      ollamaModels: [],
+      similarBooks: []
     }
   },
   computed: {
@@ -219,6 +288,20 @@ export default {
     },
     isPodcast() {
       return this.libraryItem.mediaType === 'podcast'
+    },
+    fingerprintMetrics() {
+      const fp = this.bookFingerprint
+      if (!fp) return []
+      return [
+        { label: 'Sentence length', value: fp.avgSentenceLength, pct: Math.min(100, (fp.avgSentenceLength / 30) * 100) },
+        { label: 'Vocab richness', value: fp.vocabDensity, pct: Math.min(100, (fp.vocabDensity / 0.3) * 100) },
+        { label: 'Dialogue', value: Math.round(fp.dialogueRatio * 100) + '%', pct: fp.dialogueRatio * 100 },
+        { label: 'Paragraph length', value: fp.paragraphLengthMean, pct: Math.min(100, (fp.paragraphLengthMean / 200) * 100) },
+        { label: 'Pacing variation', value: fp.pacingVariance, pct: Math.min(100, fp.pacingVariance * 10000) },
+        { label: 'Descriptive density', value: fp.descriptiveDensity, pct: Math.min(100, (fp.descriptiveDensity / 0.1) * 100) },
+        { label: 'Word length', value: fp.avgWordLength, pct: Math.min(100, (fp.avgWordLength / 8) * 100) },
+        { label: 'Complexity', value: fp.sentenceComplexity, pct: Math.min(100, (fp.sentenceComplexity / 20) * 100) }
+      ]
     },
     isMissing() {
       return this.libraryItem.isMissing
@@ -438,6 +521,80 @@ export default {
     }
   },
   methods: {
+    async analyzeBook() {
+      this.fingerprintLoading = true
+      try {
+        const resp = await this.$axios.$post(`/api/items/${this.libraryItemId}/fingerprint`)
+        this.bookFingerprint = resp
+        this.loadSimilarBooks()
+      } catch (e) {
+        console.error('Analysis failed:', e)
+        this.$toast.error('Analysis failed: ' + (e.response?.data?.error || e.message))
+      }
+      this.fingerprintLoading = false
+    },
+    async loadOllamaModels() {
+      try {
+        const resp = await this.$axios.$get('/api/ollama/tags')
+        this.ollamaModels = (resp.models || []).map(m => m.name)
+        if (this.ollamaModels.length && !this.summaryModel) {
+          this.summaryModel = this.bookFingerprint?.styleSummaryModel || this.ollamaModels[0]
+        }
+      } catch (e) {
+        this.ollamaModels = []
+      }
+    },
+    async generateSummary() {
+      if (!this.summaryModel) return
+      this.summaryLoading = true
+      const controller = new AbortController()
+      this.summaryAbort = controller
+      try {
+        const resp = await this.$axios.$post(`/api/items/${this.libraryItemId}/fingerprint/summary`, {
+          model: this.summaryModel,
+          depth: this.summaryDepth
+        }, { signal: controller.signal, timeout: 600000 })
+        if (this.bookFingerprint) {
+          this.bookFingerprint.styleSummary = resp.styleSummary
+          this.bookFingerprint.styleSummaryModel = resp.model
+        }
+      } catch (e) {
+        if (e.message !== 'canceled') {
+          this.$toast.error('Summary failed: ' + (e.response?.data?.error || e.message))
+        }
+      }
+      this.summaryLoading = false
+      this.summaryAbort = null
+    },
+    cancelSummary() {
+      if (this.summaryAbort) {
+        this.summaryAbort.abort()
+        this.summaryAbort = null
+      }
+      this.summaryLoading = false
+    },
+    async rateFingerprint(rating) {
+      try {
+        await this.$axios.$patch(`/api/items/${this.libraryItemId}/fingerprint/rating`, { rating })
+        if (this.bookFingerprint) this.bookFingerprint.styleSummaryRating = rating
+      } catch (e) {}
+    },
+    async loadFingerprint() {
+      try {
+        const resp = await this.$axios.$get(`/api/items/${this.libraryItemId}/fingerprint`)
+        this.bookFingerprint = resp
+        this.loadSimilarBooks()
+      } catch (e) {
+        // No fingerprint yet
+      }
+    },
+    async loadSimilarBooks() {
+      try {
+        this.similarBooks = await this.$axios.$get(`/api/items/${this.libraryItemId}/similar`)
+      } catch (e) {
+        this.similarBooks = []
+      }
+    },
     selectBookmark(bookmark) {
       if (!bookmark) return
       if (this.isStreaming) {
@@ -788,6 +945,10 @@ export default {
   },
   mounted() {
     this.checkDescriptionClamped()
+    if (this.isBook) {
+      this.loadFingerprint()
+      this.loadOllamaModels()
+    }
 
     this.episodeDownloadsQueued = this.libraryItem.episodeDownloadsQueued || []
     this.episodesDownloading = this.libraryItem.episodesDownloading || []

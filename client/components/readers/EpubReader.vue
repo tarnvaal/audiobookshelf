@@ -285,7 +285,13 @@ export default {
 
       const total = this.book.locations?.total || 0
       const position = Math.round(pct * total)
-      const chapter = this.findChapterFromPosition(this.chapters, pct)
+      const chapter = this.findChapterFromPosition(this._flatChapters || this.chapters, pct)
+
+      // Chapter progress (0-1 within current chapter)
+      let chapterProgress = 0
+      if (chapter && chapter.end != null && chapter.start != null && chapter.end > chapter.start) {
+        chapterProgress = Math.max(0, Math.min(1, (pct - chapter.start) / (chapter.end - chapter.start)))
+      }
 
       // Try to generate a CFI from the locations map
       const cfi = this.book.locations?.cfiFromPercentage?.(pct) || null
@@ -317,6 +323,7 @@ export default {
       this.$emit('reading-status', {
         percentage: pct,
         chapter: chapter?.title || '',
+        chapterProgress,
         location: position,
         totalLocations: total,
         sessionMinutes,
@@ -453,12 +460,20 @@ export default {
       if (this.ebookBookmarks.find(b => b.cfi === cfi)) return
       const pct = this.book?.locations?.percentageFromCfi(cfi)
       const chapter = this.findChapterFromPosition(this.chapters, pct)
+      let preview = ''
+      if (this.renderer) {
+        const visibleText = this.renderer.getVisibleText()
+        preview = visibleText.slice(0, 120).trim()
+        if (visibleText.length > 120) preview += '...'
+      }
+
       this.ebookBookmarks.push({
         cfi,
         percentage: pct,
         chapter: chapter?.title || '',
         label: label || `${Math.round((pct || 0) * 100)}% — ${chapter?.title || 'Unknown'}`,
-        created: Date.now()
+        created: Date.now(),
+        preview
       })
       this.ebookBookmarks.sort((a, b) => (a.percentage || 0) - (b.percentage || 0))
       this.saveBookmarks()
@@ -775,12 +790,22 @@ export default {
           }
           container.addEventListener('wheel', this._wheelHandler, { passive: false })
 
+          // Word selection for vocabulary lookup
+          container.addEventListener('mouseup', (e) => {
+            const selection = window.getSelection()
+            if (!selection || selection.isCollapsed) return
+            const word = selection.toString().trim()
+            if (!word || word.includes(' ') || word.length > 30) return
+            this.$emit('word-selected', { word: word.toLowerCase(), x: e.clientX, y: e.clientY })
+          })
+
           // Touch events
           container.addEventListener('touchstart', (e) => this.$emit('touchstart', e))
           container.addEventListener('touchend', (e) => this.$emit('touchend', e))
 
           // Load chapters and bookmarks
           await this.getChapters()
+          this._flatChapters = this.flattenChapters(this.chapters)
           this.loadBookmarks()
           this.$emit('bookmarks-updated', this.ebookBookmarks)
 
