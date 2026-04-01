@@ -739,10 +739,7 @@ export default {
           })
 
           // Render content
-          console.log('[EpubReaderNew] Rendering with custom renderer, mode:', reader.renderer.mode)
           await reader.renderer.render()
-          console.log('[EpubReaderNew] Rendered', reader.renderer.loadedSections.length, 'sections')
-
 
           // Apply theme and settings
           this._applySettings(this.ereaderSettings)

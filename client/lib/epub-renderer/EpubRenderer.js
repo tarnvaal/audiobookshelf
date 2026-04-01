@@ -110,7 +110,6 @@ export default class EpubRenderer {
 
     // Defer column sizing until the container has dimensions
     this._applyPaginatedLayout()
-    console.log('[EpubRenderer] Paginated DOM built, wrapper children:', wrapper.childNodes.length, 'container innerHTML length:', this.container.innerHTML.length)
   }
 
   /**
@@ -121,7 +120,6 @@ export default class EpubRenderer {
     if (!this._wrapper) return
     const w = this.container.clientWidth
     const h = this.container.clientHeight
-    console.log('[EpubRenderer] Paginated layout:', w, 'x', h)
     if (w > 0 && h > 0) {
       // CSS columns pagination: fixed height forces horizontal overflow into columns.
       // Container clips to show one page, translateX moves between pages.
@@ -137,7 +135,6 @@ export default class EpubRenderer {
       // Wait a frame for columns to lay out before measuring
       requestAnimationFrame(() => {
         this._recalcPages()
-        console.log('[EpubRenderer] Pages:', this.totalPages, 'scrollWidth:', this._wrapper.scrollWidth)
       })
     } else {
       requestAnimationFrame(() => this._applyPaginatedLayout())
