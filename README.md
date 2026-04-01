@@ -42,12 +42,12 @@ Reader.vue ------- unchanged parent component (TTS, chat, bookmarks, settings)
 - Theme application (dark/sepia/light)
 - Mobile-friendly layout
 
-### Known gaps
+## TTS and chat dependencies
 
-- Continuous scroll mode is untested with real epubs
-- Settings changes mid-read (font/size/spacing) are untested
-- Chat context text extraction via compatibility shim is untested
-- Touch swipe to turn pages is not implemented
+- **Kokoro TTS** -- runs as a Docker container on the host. The reader proxies requests through `/api/tts/speech`. See [Kokoro FastAPI](https://github.com/remsky/Kokoro-FastAPI) for setup. Default endpoint: `http://host.docker.internal:8880`.
+- **Ollama** -- powers the in-reader chat panel. Any model works. See [ollama.com](https://ollama.com) for install. Default endpoint: `http://host.docker.internal:11434`.
+
+Both are configured via environment variables in `server/Server.js` (`KOKORO_URL`, `OLLAMA_URL`).
 
 ## Files
 
