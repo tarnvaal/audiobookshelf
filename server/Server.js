@@ -447,11 +447,27 @@ class Server {
         const title = book?.title || book?.metadata?.title || 'Unknown'
         const author = book?.authorName || book?.metadata?.authorName || 'Unknown'
 
+        // Extract text samples for LLM analysis
+        const excerpts = []
+        // Opening (first 500 words from first chapter with real content)
+        const firstChapter = chapters.find(c => c.text.length > 200)
+        if (firstChapter) excerpts.push({ label: 'Opening', text: firstChapter.text.split(/\s+/).slice(0, 500).join(' ') })
+        // Mid-point (500 words from the middle chapter)
+        const midChapter = chapters[Math.floor(chapters.length / 2)]
+        if (midChapter) excerpts.push({ label: 'Mid-point', text: midChapter.text.split(/\s+/).slice(0, 500).join(' ') })
+        // A dialogue-heavy passage (find the chapter with most quote marks)
+        const dialogueChapter = chapters.reduce((best, ch) => {
+          const quotes = (ch.text.match(/[""\u201C\u201D]/g) || []).length
+          return quotes > (best.quotes || 0) ? { ...ch, quotes } : best
+        }, { quotes: 0 })
+        if (dialogueChapter.text) excerpts.push({ label: 'Dialogue sample', text: dialogueChapter.text.split(/\s+/).slice(0, 400).join(' ') })
+
         fingerprints[req.params.id] = {
           libraryItemId: req.params.id,
           title,
           author,
           ...metrics,
+          excerpts,
           styleSummary: null,
           styleSummaryModel: null,
           styleSummaryPromptVersion: null,
@@ -507,21 +523,22 @@ class Server {
       const model = req.body.model || 'impish-bloodmoon'
       const promptVersion = req.body.promptVersion || 'v1'
 
-      const topWords = (fp.distinctiveWords || []).slice(0, 5).map(w => w.word).join(', ')
-      const prompt = `You are a literary analyst. Given these writing metrics for a book, write a 2-3 sentence style summary describing what the reading experience feels like. Do not repeat the numbers. Do not start with the book title.
+      const topWords = (fp.distinctiveWords || []).slice(0, 10).map(w => w.word).join(', ')
+      const excerptText = (fp.excerpts || []).map(e => `--- ${e.label} ---\n${e.text}`).join('\n\n')
+
+      const prompt = `Analyze this book based on the excerpts and metrics below. Write a 4-6 sentence description covering:
+- What the book is about (setting, central tension, themes) without spoilers
+- What the prose feels like to read (dense? propulsive? literary? pulpy?)
+- The tone and atmosphere
+- Who would enjoy it
+
+Do not list metrics. Do not start with the title. Write naturally as if recommending the book to someone who's never heard of it.
 
 Book: "${fp.title}" by ${fp.author}
+Total words: ${fp.totalWords} | ${fp.dialogueRatio ? Math.round(fp.dialogueRatio * 100) : 0}% dialogue | Vocab density: ${fp.vocabDensity}
+Distinctive words: ${topWords}
 
-Metrics:
-- Average sentence length: ${fp.avgSentenceLength} words
-- Vocabulary richness: ${fp.vocabDensity} (0-1, higher = more diverse)
-- Dialogue: ${Math.round(fp.dialogueRatio * 100)}% of text
-- Average paragraph: ${fp.paragraphLengthMean} words
-- Pacing variation: ${fp.pacingVariance} (higher = more varied)
-- Descriptive density: ${fp.descriptiveDensity}
-- Most distinctive words: ${topWords}
-
-Write a concise, natural-language summary of the writing style.`
+${excerptText}`
 
       try {
         const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
