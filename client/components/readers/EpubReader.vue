@@ -392,6 +392,12 @@ export default {
     /** @param {string} location - CFI of the new location */
     relocated(location) {
       if (!this.book) return
+      // During TTS playback, ttsSaveProgress handles progress — skip here
+      // to avoid overwriting paragraph-level position with page-level position
+      if (this._ttsNavigating) {
+        this._ttsNavigating = false
+        return
+      }
       const pct = location.end?.percentage || 0
       const position = this.book.locations?.locationFromCfi(location.start.cfi)
       const total = this.book?.locations?.total || 0
@@ -754,6 +760,7 @@ export default {
                 if (!section) continue
                 const cfi = section.cfiFromElement(el)
                 if (cfi) {
+                  this._ttsNavigating = true
                   this.rendition.display(cfi)
                 }
                 break
