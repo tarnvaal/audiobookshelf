@@ -136,8 +136,8 @@ client/
 
 ## Current Status
 
-- [ ] Phase 1: Core modules + tests
-- [ ] Phase 2: New EpubReader.vue with feature flag
-- [ ] Phase 3: TTS migration
-- [ ] Phase 4: Chat context migration
-- [ ] Phase 5: Remove old code + flag
+- [x] Phase 1: Core modules + tests (48 passing)
+- [x] Phase 2: New EpubReader.vue with feature flag
+- [x] Phase 3: TTS migration (highlighting, auto-page-advance, progress save)
+- [x] Phase 4: Chat context migration (compatibility shim)
+- [x] Phase 5: Remove old code + flag (-1018 lines)

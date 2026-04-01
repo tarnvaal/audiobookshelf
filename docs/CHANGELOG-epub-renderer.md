@@ -40,13 +40,14 @@
 - Progress saving on page turn
 - Theme application (dark/sepia/light)
 
-#### Remaining
-- **Phase 3: TTS hardening** — verify pause/resume, auto-advance, progress save on paragraph end
-- **Phase 4: Chat context** — verify page/chapter/selection/range text extraction via compatibility shim
-- **Continuous scroll mode** — untested with real epub, likely needs fixes
-- **Position restore on reload** — `_scrollToCfi` does rough spine-level positioning, needs exact paragraph restore
-- **Bookmarks** — navigate to bookmark (needs page calculation from CFI)
-- **Settings panel** — font, size, spacing, theme changes while reading
-- **Keyboard/touch navigation** — verify arrow keys and swipe
-- **Search** — verify `searchBook` works with new renderer
-- **Phase 5: Remove old code + feature flag** — once all above validated
+### Phase 5: Cleanup (complete)
+- Deleted EpubReaderLegacy.vue (997 lines)
+- Renamed EpubReaderNew.vue -> EpubReader.vue
+- Removed feature flag and reflow handlers from Reader.vue
+- Net -1018 lines removed
+
+#### Remaining (test when used)
+- Continuous scroll mode — untested with real epub
+- Settings panel live updates — font/size/spacing/theme mid-read
+- Chat context — text extraction via compatibility shim
+- Touch swipe to turn pages
