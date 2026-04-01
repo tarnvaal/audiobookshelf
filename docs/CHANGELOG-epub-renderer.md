@@ -23,8 +23,30 @@
 - Compatibility shim on EpubReaderNew.vue exposes `rendition` for Reader.vue chat context
 - All 48 Phase 1 tests passing
 
-#### Pending
-- Test new renderer with real epub in browser
-- Phase 3: TTS migration validation
-- Phase 4: Chat context migration
-- Phase 5: Remove old code + feature flag
+#### Fixed during bring-up
+- XML document `.body` property missing — fall back to `querySelector('body')`
+- XHTML xmlns attributes breaking HTML rendering — import nodes into HTML context
+- Container zero dimensions at render time — defer column sizing with requestAnimationFrame
+- CSS column overflow clipping all content — wrapper overflow visible, container clips
+- `getBoundingClientRect` not reflecting CSS column transforms — use `offsetLeft / pageWidth` for page detection
+- Position tracking using DOM-based CFI (fails across document boundaries) — use page-based percentage + `locations.cfiFromPercentage`
+
+#### Working
+- Paginated rendering (661 pages from 89 spine sections)
+- Page turning (prev/next arrows)
+- TTS starts from current page
+- TTS blue box highlighting
+- Position/percentage/chapter tracking in status bar
+- Progress saving on page turn
+- Theme application (dark/sepia/light)
+
+#### Remaining
+- **Phase 3: TTS hardening** — verify pause/resume, auto-advance, progress save on paragraph end
+- **Phase 4: Chat context** — verify page/chapter/selection/range text extraction via compatibility shim
+- **Continuous scroll mode** — untested with real epub, likely needs fixes
+- **Position restore on reload** — `_scrollToCfi` does rough spine-level positioning, needs exact paragraph restore
+- **Bookmarks** — navigate to bookmark (needs page calculation from CFI)
+- **Settings panel** — font, size, spacing, theme changes while reading
+- **Keyboard/touch navigation** — verify arrow keys and swipe
+- **Search** — verify `searchBook` works with new renderer
+- **Phase 5: Remove old code + feature flag** — once all above validated
