@@ -110,6 +110,7 @@ export default class EpubRenderer {
 
     // Defer column sizing until the container has dimensions
     this._applyPaginatedLayout()
+    console.log('[EpubRenderer] Paginated DOM built, wrapper children:', wrapper.childNodes.length, 'container innerHTML length:', this.container.innerHTML.length)
   }
 
   /**

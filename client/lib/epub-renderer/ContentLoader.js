@@ -54,6 +54,9 @@ export default class ContentLoader {
 
     // Serialize body innerHTML
     const html = this._serializeBody(body)
+    if (index < 3) {
+      console.log(`[ContentLoader] Section ${index}: body children=${body.childNodes.length}, html length=${html.length}, first 200 chars:`, html.substring(0, 200))
+    }
 
     return { spineIndex: index, href: section.href, html, styles, section }
   }
@@ -136,18 +139,16 @@ export default class ContentLoader {
 
   /**
    * Serialize body contents to an HTML string.
+   * Handles XHTML documents by importing nodes into an HTML context
+   * to avoid xmlns attributes that break rendering.
    */
   _serializeBody(body) {
-    // Use innerHTML to get just the body contents, not the body tag itself
-    // Fall back to XMLSerializer for xhtml documents
-    if (body.innerHTML !== undefined) {
-      return body.innerHTML
+    // Import the body's children into a temporary HTML div to strip
+    // XML namespace attributes that break rendering when set via innerHTML.
+    const temp = document.createElement('div')
+    for (const child of Array.from(body.childNodes)) {
+      temp.appendChild(document.importNode(child, true))
     }
-    const serializer = new XMLSerializer()
-    let html = ''
-    for (const child of body.childNodes) {
-      html += serializer.serializeToString(child)
-    }
-    return html
+    return temp.innerHTML
   }
 }
