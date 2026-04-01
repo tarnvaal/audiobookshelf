@@ -15,7 +15,7 @@ async function extractEpubText(epubPath) {
     const opfMatch = containerStr.match(/full-path="([^"]+)"/)
     if (!opfMatch) throw new Error('Could not find OPF path in container.xml')
     const opfPath = opfMatch[1]
-    const opfDir = path.dirname(opfPath)
+    const opfDir = path.dirname(opfPath) === '.' ? '' : path.dirname(opfPath)
 
     // 2. Parse the OPF for manifest and spine
     const opfData = await zip.entryData(opfPath)
