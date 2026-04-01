@@ -2,6 +2,17 @@
  * PositionTracker — maps scroll position to CFI and percentage,
  * and emits relocated events on scroll. Uses epub.js Section objects
  * for CFI generation and Book.locations for percentage mapping.
+ *
+ * NOTE: getCfiForElement() calls section.cfiFromElement(el), which only
+ * works when el is in the section's original parsed XML document
+ * (section.document). Our renderer injects content into the page DOM via
+ * importNode, so elements are in a different document tree. cfiFromElement
+ * will return null or incorrect results on injected elements.
+ *
+ * For position tracking, EpubReader.vue uses page-based percentage
+ * (currentPage / totalPages) and derives CFI via book.locations.cfiFromPercentage()
+ * instead of this class. PositionTracker is retained for continuous scroll mode
+ * where scroll-based tracking and the relocated event emitter are still useful.
  */
 export default class PositionTracker {
   /**
