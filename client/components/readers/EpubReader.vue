@@ -392,12 +392,6 @@ export default {
     /** @param {string} location - CFI of the new location */
     relocated(location) {
       if (!this.book) return
-      // During TTS playback, ttsSaveProgress handles progress — skip here
-      // to avoid overwriting paragraph-level position with page-level position
-      if (this._ttsNavigating) {
-        this._ttsNavigating = false
-        return
-      }
       const pct = location.end?.percentage || 0
       const position = this.book.locations?.locationFromCfi(location.start.cfi)
       const total = this.book?.locations?.total || 0
@@ -739,40 +733,20 @@ export default {
       el.style.setProperty('outline-offset', '2px', 'important')
       el.style.setProperty('background-color', 'rgba(59, 130, 246, 0.08)', 'important')
 
-      // Check if element is visible; if not, navigate the rendition to show it
+      // Scroll the element into view via the manager container, not the iframe
       const container = this.rendition?.manager?.container
-      if (container) {
-        const iframe = el.ownerDocument?.defaultView?.frameElement
-        if (iframe) {
-          const iframeRect = iframe.getBoundingClientRect()
-          const elRect = el.getBoundingClientRect()
-          const containerRect = container.getBoundingClientRect()
-          const absTop = iframeRect.top + elRect.top
-          const absBottom = iframeRect.top + elRect.bottom
-          if (absBottom <= containerRect.top || absTop >= containerRect.bottom) {
-            // Element is off-screen — generate CFI and navigate to it
-            try {
-              const contents = this.rendition.getContents() || []
-              for (const c of contents) {
-                const doc = c.document || c.content?.ownerDocument
-                if (!doc || !doc.body.contains(el)) continue
-                const section = c.sectionIndex != null ? this.book.spine.get(c.sectionIndex) : null
-                if (!section) continue
-                const cfi = section.cfiFromElement(el)
-                if (cfi) {
-                  this._ttsNavigating = true
-                  this.rendition.display(cfi)
-                }
-                break
-              }
-            } catch (e) {
-              // Fallback to scrollIntoView
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            }
-          }
+      const iframe = el.ownerDocument?.defaultView?.frameElement
+      if (container && iframe) {
+        const iframeRect = iframe.getBoundingClientRect()
+        const elRect = el.getBoundingClientRect()
+        const containerRect = container.getBoundingClientRect()
+        const absTop = iframeRect.top + elRect.top
+        const absBottom = iframeRect.top + elRect.bottom
+        // Only scroll if element is outside visible area
+        if (absBottom <= containerRect.top || absTop >= containerRect.bottom) {
+          const targetScroll = container.scrollTop + (absTop - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2)
+          container.scrollTo({ top: targetScroll, behavior: 'smooth' })
         }
-      } else {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }
     },
     ttsClearHighlight() {
