@@ -269,78 +269,78 @@ export default {
     _onPositionChanged() {
       if (!this.renderer || !this.book) return
 
-      // Find first visible element and generate CFI
-      const el = this.renderer.getFirstVisibleParagraphIndex
-        ? this._findFirstVisibleEl()
-        : null
+      // Calculate position from page number (works for both modes)
+      const pct = this.renderer.mode === 'paginated'
+        ? (this.renderer.totalPages > 1 ? this.renderer.currentPage / (this.renderer.totalPages - 1) : 0)
+        : this._getScrollPercentage()
 
-      if (!el) return
+      const total = this.book.locations?.total || 0
+      const position = Math.round(pct * total)
+      const chapter = this.findChapterFromPosition(this.chapters, pct)
 
-      const spineIndex = this.renderer.getSpineIndexForElement(el)
-      const sectionData = this.renderer.getSection(spineIndex)
-      if (!sectionData?.section) return
+      // Try to generate a CFI from the locations map
+      const cfi = this.book.locations?.cfiFromPercentage?.(pct) || null
 
-      try {
-        const cfi = sectionData.section.cfiFromElement(el)
-        if (!cfi) return
-        const pct = this.book.locations.percentageFromCfi(cfi) || 0
-        const position = this.book.locations.locationFromCfi(cfi) || 0
-        const total = this.book.locations.total || 0
-        const chapter = this.findChapterFromPosition(this.chapters, pct)
+      this._currentCfi = cfi
+      this._currentPct = pct
+      // Find current href from visible section
+      const visibleSection = this._findVisibleSection()
+      if (visibleSection) this._currentHref = visibleSection
 
-        this._currentCfi = cfi
-        this._currentPct = pct
-        this._currentHref = sectionData.href
+      // Reading stats
+      const now = Date.now()
+      if (!this.sessionStartTime) {
+        this.sessionStartTime = now
+        this.sessionStartPct = pct
+      }
+      if (!this.initialPositioning) {
+        this.pageTurns++
+        this.lastPageTurnTime = now
+      }
+      const sessionMinutes = Math.round((now - this.sessionStartTime) / 60000)
+      const pctRead = pct - this.sessionStartPct
+      const pctRemaining = 1 - pct
+      let etaMinutes = null
+      if (pctRead > 0.005 && sessionMinutes > 0) {
+        etaMinutes = Math.round(pctRemaining / (pctRead / sessionMinutes))
+      }
 
-        // Reading stats
-        const now = Date.now()
-        if (!this.sessionStartTime) {
-          this.sessionStartTime = now
-          this.sessionStartPct = pct
-        }
-        if (!this.initialPositioning) {
-          this.pageTurns++
-          this.lastPageTurnTime = now
-        }
-        const sessionMinutes = Math.round((now - this.sessionStartTime) / 60000)
-        const pctRead = pct - this.sessionStartPct
-        const pctRemaining = 1 - pct
-        let etaMinutes = null
-        if (pctRead > 0.005 && sessionMinutes > 0) {
-          etaMinutes = Math.round(pctRemaining / (pctRead / sessionMinutes))
-        }
+      this.$emit('reading-status', {
+        percentage: pct,
+        chapter: chapter?.title || '',
+        location: position,
+        totalLocations: total,
+        sessionMinutes,
+        etaMinutes,
+        currentCfi: cfi
+      })
 
-        this.$emit('reading-status', {
-          percentage: pct,
-          chapter: chapter?.title || '',
-          location: position,
-          totalLocations: total,
-          sessionMinutes,
-          etaMinutes,
-          currentCfi: cfi
-        })
+      if (this.initialPositioning) return
 
-        if (this.initialPositioning) return
-        if (this.savedEbookLocation === cfi) return
-
+      if (cfi) {
         this.updateProgress({
           ebookLocation: cfi,
           ebookProgress: pct || undefined
         })
-      } catch (e) {
-        // CFI generation can fail for some elements
       }
     },
 
-    _findFirstVisibleEl() {
+    _getScrollPercentage() {
       const container = this.$refs.epubContent
-      if (!container) return null
-      const containerRect = container.getBoundingClientRect()
-      const els = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote')
-      for (const el of els) {
-        const rect = el.getBoundingClientRect()
-        if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
-          return el
+      if (!container || container.scrollHeight <= container.clientHeight) return 0
+      return container.scrollTop / (container.scrollHeight - container.clientHeight)
+    },
+
+    _findVisibleSection() {
+      if (!this.renderer) return null
+      if (this.renderer.mode === 'paginated') {
+        const pageWidth = this.renderer.container.clientWidth
+        const sections = this.renderer.container.querySelectorAll('[data-spine-index]')
+        for (const section of sections) {
+          const elPage = Math.floor(section.offsetLeft / pageWidth)
+          if (elPage === this.renderer.currentPage) {
+            return section.getAttribute('data-href')
+          }
         }
       }
       return null
