@@ -2,7 +2,20 @@
 
 ## [Unreleased]
 
-### Added
-- `docs/epub-renderer-rewrite.md` — full rewrite plan with architecture, interface contract, test plan, phased delivery
+### Phase 1: Core Modules (in progress)
+
+#### Added
+- `client/lib/epub-renderer/ContentLoader.js` — spine item loading, HTML sanitization, URL rewriting, script stripping, decorative content marking (data-tts-skip)
+- `client/lib/epub-renderer/ThemeManager.js` — dark/sepia/light themes, font/size/spacing/alignment injection, scoped epub CSS per spine section, idempotent style management
+- `client/lib/epub-renderer/EpubRenderer.js` — core renderer with continuous scroll and paginated (CSS columns) modes, TTS paragraph extraction, navigation (next/prev/scrollToSection/scrollToElement), resize, event system
+- `client/cypress/tests/lib/ContentLoader.cy.js` — tests for loading, sanitization, URL rewriting, CSS extraction, decorative content marking
+- `client/cypress/tests/lib/ThemeManager.cy.js` — tests for theme application, font settings, line spacing, idempotency, scoped CSS injection
+- `client/cypress/tests/lib/EpubRenderer.cy.js` — tests for continuous/paginated rendering, navigation, paragraph access, resize, events
+- `docs/epub-renderer-rewrite.md` — full rewrite plan
 - `docs/CHANGELOG-epub-renderer.md` — this changelog
 - Branch `epub-renderer-rewrite` created from master
+
+#### Pending
+- Run Cypress tests in browser to validate
+- PositionTracker module (CFI mapping)
+- EpubReader.vue rewrite (Phase 2)
