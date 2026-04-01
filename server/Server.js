@@ -539,7 +539,7 @@ class Server {
             const { fullText } = await extractEpubText(ebookFile.metadata.path)
             // Take first ~20K words (~27K tokens — fits 4090 24GB with 20B model)
             const words = fullText.split(/\s+/)
-            const maxWords = 20000
+            const maxWords = 10000
             bookText = words.slice(0, maxWords).join(' ')
             if (words.length > maxWords) bookText += `\n\n[... ${words.length - maxWords} more words truncated ...]`
           } catch (e) {
@@ -582,13 +582,20 @@ ${excerptText}`
       }
 
       try {
+        const promptWords = prompt.split(/\s+/).length
+        Logger.info(`[Fingerprint] Generating ${depth} summary with ${model}, ~${promptWords} words in prompt`)
+        const startTime = Date.now()
+
         const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
           model,
           messages: [{ role: 'user', content: prompt }],
           stream: false
-        }, { timeout: 600000 }) // 10 min timeout for deep analysis
+        }, { timeout: 600000 })
 
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
         const summary = resp.data?.message?.content || ''
+        Logger.info(`[Fingerprint] Summary generated in ${elapsed}s (${summary.split(/\s+/).length} words output)`)
+
         fp.styleSummary = summary.trim()
         fp.styleSummaryModel = model
         fp.styleSummaryPromptVersion = promptVersion

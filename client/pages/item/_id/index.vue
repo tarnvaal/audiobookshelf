@@ -149,7 +149,7 @@
                 </select>
                 <select v-model="summaryDepth" class="text-xs bg-primary border border-gray-600/40 rounded px-2 py-1">
                   <option value="standard">Standard (excerpts)</option>
-                  <option value="deep">Deep (~20K words)</option>
+                  <option value="deep">Deep (~10K words)</option>
                 </select>
                 <button @click="generateSummary" class="text-xs px-2 py-1 rounded border border-blue-500/40 hover:bg-blue-500/20" :disabled="summaryLoading">
                   {{ summaryLoading ? 'Generating...' : (bookFingerprint.styleSummary ? 'Regenerate' : 'Generate summary') }}
