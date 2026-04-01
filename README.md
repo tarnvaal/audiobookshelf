@@ -1,25 +1,16 @@
 # audiobookshelf (fork)
 
-Personal fork of [audiobookshelf](https://github.com/advplyr/audiobookshelf) with a rewritten epub reader.
+Fork of [audiobookshelf](https://github.com/advplyr/audiobookshelf) rebuilt around epub reading. Stock audiobookshelf is audiobook-first -- the epub reader is a secondary feature built on [epub.js](https://github.com/futurepress/epub.js) iframes. This fork replaces that rendering layer entirely.
 
-## What changed
+## What we did
 
-The stock epub reader uses [epub.js](https://github.com/futurepress/epub.js) for everything -- parsing, rendering, navigation. epub.js renders content inside iframes managed by a "continuous manager" that controls which spine items are loaded, laid out, and visible. This works for basic reading but falls apart when you build features on top of it:
+**Replaced epub.js rendering with a custom DOM renderer.** epub.js still handles parsing (book structure, spine, TOC, CFI location maps). Everything else is ours:
 
-- **TTS highlighting** requires cross-iframe DOM access, offset math between iframe and container coordinates, and careful tracking of which iframe contains the current paragraph
-- **Resize/reflow** (opening the chat panel, changing font size, window resize) triggers epub.js's internal layout pipeline, which crashes after the manager has been patched to preload all spine items (`r.views.length is not a function`)
-- **Paginated mode** fights the continuous manager's lazy loading, causing page jumps on pause/resume and position drift across chapter boundaries
-- **`rendition.display(cfi)`** is the only way to navigate, but it triggers the full view pipeline and crashes in patched state
-
-Every fix to one of these created a new edge case somewhere else.
-
-## The rewrite
-
-epub.js is now used only for parsing -- book structure, spine, TOC, CFI location maps. All rendering is custom:
-
-- **No iframes.** Content is injected as `<section>` elements in a single scrollable div. TTS paragraph extraction is `querySelectorAll('p, h1, ...')`. Highlighting is direct DOM manipulation. No cross-frame offset math.
-- **CSS columns for pagination.** Paginated mode uses `column-width` on a wrapper div with `translateX` to show one page at a time. `overflow: hidden` on the container clips to one page width. Page turns just change the transform offset.
-- **No manager pipeline.** Resize is CSS. Navigation is scroll or transform. Nothing calls into epub.js after initial parse.
+- Custom rendering pipeline -- content injected as `<section>` elements in a single div, no iframes, no epub.js Manager/Views pipeline
+- CSS column pagination -- `column-width` + `translateX` for page turns, pure CSS resize
+- TTS with Kokoro -- paragraph-level highlighting, auto-page-advance, position-aware playback start, pause/resume without position loss
+- LLM chat panel -- Ollama integration with page/chapter/selection/range context modes
+- Mobile-usable reader -- title row separated from controls, mouse wheel page turns
 
 ### Architecture
 
@@ -49,7 +40,7 @@ Reader.vue ------- unchanged parent component (TTS, chat, bookmarks, settings)
 - Position/chapter/percentage tracking in status bar
 - Progress save/restore across sessions
 - Theme application (dark/sepia/light)
-- Mobile-friendly layout (title row separated from controls)
+- Mobile-friendly layout
 
 ### Known gaps
 
@@ -76,4 +67,4 @@ See [docs/development.md](docs/development.md) for the Docker build/restart cycl
 
 ## Upstream
 
-This fork tracks [advplyr/audiobookshelf](https://github.com/advplyr/audiobookshelf). Changes are limited to the epub reader -- server code is unmodified. Upstream merges are pulled periodically.
+Tracks [advplyr/audiobookshelf](https://github.com/advplyr/audiobookshelf). Changes are limited to the epub reader -- server code is unmodified. Upstream merges pulled periodically.
