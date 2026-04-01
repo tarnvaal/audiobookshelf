@@ -405,6 +405,147 @@ class Server {
       )
     })
 
+    // ── Book DNA Fingerprinting ──
+    const { extractEpubText } = require('./utils/epubTextExtractor')
+    const { computeFingerprint, cosineSimilarity, normalizeVectors } = require('./utils/bookFingerprint')
+
+    // In-memory fingerprint store (persisted to JSON file)
+    const FINGERPRINT_PATH = Path.join(global.ConfigPath, 'book-fingerprints.json')
+    let fingerprints = {}
+    try {
+      if (fs.existsSync(FINGERPRINT_PATH)) {
+        fingerprints = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, 'utf8'))
+      }
+    } catch (e) {
+      Logger.error('[Fingerprint] Failed to load fingerprints:', e.message)
+    }
+    function saveFingerprints() {
+      fs.writeFileSync(FINGERPRINT_PATH, JSON.stringify(fingerprints, null, 2))
+    }
+
+    // Trigger analysis
+    router.post('/api/items/:id/fingerprint', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      try {
+        const libraryItem = await Database.libraryItemModel.findByPk(req.params.id)
+        if (!libraryItem) return res.status(404).json({ error: 'Item not found' })
+
+        const ebookFile = libraryItem.media?.ebookFile
+        if (!ebookFile?.metadata?.path) return res.status(400).json({ error: 'No ebook file' })
+
+        const epubPath = ebookFile.metadata.path
+        if (!epubPath.endsWith('.epub')) return res.status(400).json({ error: 'Not an epub file' })
+
+        const { chapters, fullText, totalWords } = await extractEpubText(epubPath)
+        const metrics = computeFingerprint(fullText, chapters)
+        if (!metrics) return res.status(400).json({ error: 'Not enough text to analyze' })
+
+        const title = libraryItem.media?.metadata?.title || 'Unknown'
+        const author = libraryItem.media?.metadata?.authorName || 'Unknown'
+
+        fingerprints[req.params.id] = {
+          libraryItemId: req.params.id,
+          title,
+          author,
+          ...metrics,
+          styleSummary: null,
+          styleSummaryModel: null,
+          styleSummaryPromptVersion: null,
+          styleSummaryRating: null,
+          analyzedAt: new Date().toISOString()
+        }
+        saveFingerprints()
+
+        res.json(fingerprints[req.params.id])
+      } catch (e) {
+        Logger.error('[Fingerprint] Analysis failed:', e.message)
+        res.status(500).json({ error: e.message })
+      }
+    })
+
+    // Get fingerprint
+    router.get('/api/items/:id/fingerprint', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const fp = fingerprints[req.params.id]
+      if (!fp) return res.status(404).json({ error: 'No fingerprint' })
+      res.json(fp)
+    })
+
+    // Get similar books
+    router.get('/api/items/:id/similar', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const target = fingerprints[req.params.id]
+      if (!target) return res.status(404).json({ error: 'No fingerprint for this book' })
+
+      const allFps = Object.values(fingerprints).filter(f => f.libraryItemId !== req.params.id && f.vector)
+      if (allFps.length === 0) return res.json([])
+
+      // Normalize and compute similarity
+      const withTarget = [target, ...allFps]
+      const normalized = normalizeVectors(withTarget)
+      const targetNorm = normalized[0].normalizedVector
+
+      const similar = normalized.slice(1).map(f => ({
+        libraryItemId: f.libraryItemId,
+        title: f.title,
+        author: f.author,
+        similarity: cosineSimilarity(targetNorm, f.normalizedVector)
+      }))
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 5)
+
+      res.json(similar)
+    })
+
+    // Generate/regenerate style summary via Ollama
+    router.post('/api/items/:id/fingerprint/summary', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
+      const fp = fingerprints[req.params.id]
+      if (!fp) return res.status(404).json({ error: 'No fingerprint' })
+
+      const model = req.body.model || 'llama3'
+      const promptVersion = req.body.promptVersion || 'v1'
+
+      const topWords = (fp.distinctiveWords || []).slice(0, 5).map(w => w.word).join(', ')
+      const prompt = `You are a literary analyst. Given these writing metrics for a book, write a 2-3 sentence style summary describing what the reading experience feels like. Do not repeat the numbers. Do not start with the book title.
+
+Book: "${fp.title}" by ${fp.author}
+
+Metrics:
+- Average sentence length: ${fp.avgSentenceLength} words
+- Vocabulary richness: ${fp.vocabDensity} (0-1, higher = more diverse)
+- Dialogue: ${Math.round(fp.dialogueRatio * 100)}% of text
+- Average paragraph: ${fp.paragraphLengthMean} words
+- Pacing variation: ${fp.pacingVariance} (higher = more varied)
+- Descriptive density: ${fp.descriptiveDensity}
+- Most distinctive words: ${topWords}
+
+Write a concise, natural-language summary of the writing style.`
+
+      try {
+        const resp = await axios.post(`${OLLAMA_URL}/api/chat`, {
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false
+        }, { timeout: 120000 })
+
+        const summary = resp.data?.message?.content || ''
+        fp.styleSummary = summary.trim()
+        fp.styleSummaryModel = model
+        fp.styleSummaryPromptVersion = promptVersion
+        saveFingerprints()
+
+        res.json({ styleSummary: fp.styleSummary, model, promptVersion })
+      } catch (e) {
+        res.status(502).json({ error: 'Ollama not reachable: ' + e.message })
+      }
+    })
+
+    // Save rating
+    router.patch('/api/items/:id/fingerprint/rating', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), (req, res) => {
+      const fp = fingerprints[req.params.id]
+      if (!fp) return res.status(404).json({ error: 'No fingerprint' })
+      fp.styleSummaryRating = req.body.rating
+      saveFingerprints()
+      res.json({ rating: fp.styleSummaryRating })
+    })
+
     // Static folder
     router.use(express.static(Path.join(global.appRoot, 'static')))
 
