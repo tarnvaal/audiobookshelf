@@ -732,8 +732,41 @@ export default {
       el.style.setProperty('outline', '2px solid rgba(59, 130, 246, 0.5)', 'important')
       el.style.setProperty('outline-offset', '2px', 'important')
       el.style.setProperty('background-color', 'rgba(59, 130, 246, 0.08)', 'important')
-      // Scroll the paragraph into view within the iframe
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+      // Check if element is visible; if not, navigate the rendition to show it
+      const container = this.rendition?.manager?.container
+      if (container) {
+        const iframe = el.ownerDocument?.defaultView?.frameElement
+        if (iframe) {
+          const iframeRect = iframe.getBoundingClientRect()
+          const elRect = el.getBoundingClientRect()
+          const containerRect = container.getBoundingClientRect()
+          const absTop = iframeRect.top + elRect.top
+          const absBottom = iframeRect.top + elRect.bottom
+          if (absBottom <= containerRect.top || absTop >= containerRect.bottom) {
+            // Element is off-screen — generate CFI and navigate to it
+            try {
+              const contents = this.rendition.getContents() || []
+              for (const c of contents) {
+                const doc = c.document || c.content?.ownerDocument
+                if (!doc || !doc.body.contains(el)) continue
+                const section = c.sectionIndex != null ? this.book.spine.get(c.sectionIndex) : null
+                if (!section) continue
+                const cfi = section.cfiFromElement(el)
+                if (cfi) {
+                  this.rendition.display(cfi)
+                }
+                break
+              }
+            } catch (e) {
+              // Fallback to scrollIntoView
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
+          }
+        }
+      } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
     },
     ttsClearHighlight() {
       const contents = this.rendition?.getContents?.() || []
