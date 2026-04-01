@@ -22,20 +22,17 @@ async function extractEpubText(epubPath) {
     const opfStr = opfData.toString('utf8')
 
     // Extract manifest items (id -> href mapping)
+    // Attributes can be in any order, so extract each attribute individually
     const manifest = {}
-    const itemRegex = /<item\s+[^>]*id="([^"]*)"[^>]*href="([^"]*)"[^>]*(?:media-type="([^"]*)")?[^>]*\/?>/g
+    const itemRegex = /<item\s+([^>]*?)\/?>/g
     let match
     while ((match = itemRegex.exec(opfStr)) !== null) {
-      manifest[match[1]] = {
-        href: match[2],
-        mediaType: match[3] || ''
-      }
-    }
-    // Also catch items where media-type comes before href
-    const itemRegex2 = /<item\s+[^>]*media-type="([^"]*)"[^>]*href="([^"]*)"[^>]*id="([^"]*)"[^>]*\/?>/g
-    while ((match = itemRegex2.exec(opfStr)) !== null) {
-      if (!manifest[match[3]]) {
-        manifest[match[3]] = { href: match[2], mediaType: match[1] }
+      const attrs = match[1]
+      const id = (attrs.match(/id="([^"]*)"/)||[])[1]
+      const href = (attrs.match(/href="([^"]*)"/)||[])[1]
+      const mediaType = (attrs.match(/media-type="([^"]*)"/)||[])[1]
+      if (id && href) {
+        manifest[id] = { href, mediaType: mediaType || '' }
       }
     }
 

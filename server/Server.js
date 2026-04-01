@@ -438,9 +438,11 @@ class Server {
         const epubPath = ebookFile.metadata.path
         if (!epubPath.endsWith('.epub')) return res.status(400).json({ error: 'Not an epub file' })
 
+        Logger.info(`[Fingerprint] Extracting text from: ${epubPath}`)
         const { chapters, fullText, totalWords } = await extractEpubText(epubPath)
+        Logger.info(`[Fingerprint] Extracted ${chapters.length} chapters, ${totalWords} words`)
         const metrics = computeFingerprint(fullText, chapters)
-        if (!metrics) return res.status(400).json({ error: 'Not enough text to analyze' })
+        if (!metrics) return res.status(400).json({ error: `Not enough text to analyze (${totalWords} words from ${chapters.length} chapters)` })
 
         const title = book?.title || book?.metadata?.title || 'Unknown'
         const author = book?.authorName || book?.metadata?.authorName || 'Unknown'
