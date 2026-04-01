@@ -35,8 +35,8 @@
       </button>
     </div>
 
-    <div class="absolute top-4 left-1/2 transform -translate-x-1/2">
-      <h1 :data-type="ebookType" class="text-lg sm:text-xl md:text-2xl mb-1 data-[type=comic]:hidden" style="line-height: 1.15; font-weight: 100">
+    <div class="absolute top-14 sm:top-4 left-4 sm:left-1/2 sm:transform sm:-translate-x-1/2 z-10">
+      <h1 :data-type="ebookType" class="text-sm sm:text-xl md:text-2xl mb-1 data-[type=comic]:hidden truncate max-w-[80vw] sm:max-w-none" style="line-height: 1.15; font-weight: 100">
         <span style="font-weight: 600">{{ abTitle }}</span>
         <span v-if="abAuthor" class="hidden md:inline"> – </span>
         <span v-if="abAuthor" class="hidden md:inline">{{ abAuthor }}</span>
