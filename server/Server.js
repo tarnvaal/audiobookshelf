@@ -426,10 +426,13 @@ class Server {
     // Trigger analysis
     router.post('/api/items/:id/fingerprint', this.auth.ifAuthNeeded(this.authMiddleware.bind(this)), async (req, res) => {
       try {
-        const libraryItem = await Database.libraryItemModel.findByPk(req.params.id)
+        const libraryItem = await Database.libraryItemModel.findByPk(req.params.id, {
+          include: [{ model: Database.bookModel, required: false }]
+        })
         if (!libraryItem) return res.status(404).json({ error: 'Item not found' })
 
-        const ebookFile = libraryItem.media?.ebookFile
+        const book = libraryItem.book || libraryItem.media
+        const ebookFile = book?.ebookFile
         if (!ebookFile?.metadata?.path) return res.status(400).json({ error: 'No ebook file' })
 
         const epubPath = ebookFile.metadata.path
@@ -439,8 +442,8 @@ class Server {
         const metrics = computeFingerprint(fullText, chapters)
         if (!metrics) return res.status(400).json({ error: 'Not enough text to analyze' })
 
-        const title = libraryItem.media?.metadata?.title || 'Unknown'
-        const author = libraryItem.media?.metadata?.authorName || 'Unknown'
+        const title = book?.title || book?.metadata?.title || 'Unknown'
+        const author = book?.authorName || book?.metadata?.authorName || 'Unknown'
 
         fingerprints[req.params.id] = {
           libraryItemId: req.params.id,
