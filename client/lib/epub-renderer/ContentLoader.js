@@ -54,9 +54,6 @@ export default class ContentLoader {
 
     // Serialize body innerHTML
     const html = this._serializeBody(body)
-    if (index < 3) {
-      console.log(`[ContentLoader] Section ${index}: body children=${body.childNodes.length}, html length=${html.length}, first 200 chars:`, html.substring(0, 200))
-    }
 
     return { spineIndex: index, href: section.href, html, styles, section }
   }

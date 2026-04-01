@@ -734,14 +734,6 @@ export default {
           await reader.renderer.render()
           console.log('[EpubReaderNew] Rendered', reader.renderer.loadedSections.length, 'sections')
 
-          // Debug: check if content is in DOM and visible
-          const allP = container.querySelectorAll('p')
-          const firstSection = container.querySelector('section[data-spine-index="2"]')
-          console.log('[EpubReaderNew] Debug: total <p> tags:', allP.length,
-            'section2 exists:', !!firstSection,
-            'section2 text:', firstSection?.textContent?.substring(0, 100),
-            'container offset:', container.offsetWidth, 'x', container.offsetHeight,
-            'wrapper:', container.querySelector('.epub-pages')?.offsetWidth, 'x', container.querySelector('.epub-pages')?.offsetHeight)
 
           // Apply theme and settings
           this._applySettings(this.ereaderSettings)
