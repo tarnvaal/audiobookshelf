@@ -15,7 +15,16 @@
 - `docs/CHANGELOG-epub-renderer.md` — this changelog
 - Branch `epub-renderer-rewrite` created from master
 
+#### Added (cont.)
+- `client/lib/epub-renderer/PositionTracker.js` — CFI mapping, scroll tracking, relocated events (9/9 tests passing)
+- `client/cypress/tests/lib/PositionTracker.cy.js` — tests for position tracking, CFI generation, scroll events
+- `client/components/readers/EpubReaderNew.vue` — new EpubReader using custom renderer (Phase 2)
+- Feature flag: `localStorage.setItem('useCustomRenderer', 'true')` toggles new renderer
+- Compatibility shim on EpubReaderNew.vue exposes `rendition` for Reader.vue chat context
+- All 48 Phase 1 tests passing
+
 #### Pending
-- Run Cypress tests in browser to validate
-- PositionTracker module (CFI mapping)
-- EpubReader.vue rewrite (Phase 2)
+- Test new renderer with real epub in browser
+- Phase 3: TTS migration validation
+- Phase 4: Chat context migration
+- Phase 5: Remove old code + feature flag
