@@ -16,12 +16,12 @@
         <span class="material-symbols text-1.5xl">bookmarks</span>
         <span class="text-xs ml-0.5 mt-1">{{ ebookBookmarks.length }}</span>
       </button>
-      <button v-if="isEpub" @click="ttsToggle" type="button" aria-label="Read aloud" class="ml-4 inline-flex opacity-80 hover:opacity-100" :title="ttsPlaying ? 'Stop reading' : 'Read aloud'">
-        <span class="material-symbols text-1.5xl" :class="ttsPlaying ? 'text-blue-400' : ''">{{ ttsPlaying ? 'stop' : 'play_arrow' }}</span>
+      <button v-if="isEpub" @click="ttsToggle" type="button" aria-label="Read aloud" class="ml-4 inline-flex opacity-80 hover:opacity-100" :title="ttsPlaying ? 'Pause' : (ttsPaused ? 'Resume' : 'Read aloud')">
+        <span class="material-symbols text-1.5xl" :class="(ttsPlaying || ttsPaused) ? 'text-blue-400' : ''">{{ ttsPlaying ? 'pause' : 'play_arrow' }}</span>
       </button>
       <div v-if="ttsPlaying || ttsPaused" class="ml-1 flex items-center gap-1">
-        <button @click="ttsPauseResume" type="button" class="inline-flex opacity-80 hover:opacity-100" :title="ttsPaused ? 'Resume' : 'Pause'">
-          <span class="material-symbols text-1.5xl">{{ ttsPaused ? 'play_arrow' : 'pause' }}</span>
+        <button @click="ttsStop" type="button" class="inline-flex opacity-80 hover:opacity-100" title="Stop reading">
+          <span class="material-symbols text-1.5xl">stop</span>
         </button>
         <button @click="ttsSkip" type="button" class="inline-flex opacity-80 hover:opacity-100" title="Skip paragraph">
           <span class="material-symbols text-1.5xl">skip_next</span>
@@ -902,8 +902,12 @@ export default {
     },
     // ── TTS methods ──
     async ttsToggle() {
-      if (this.ttsPlaying || this.ttsPaused) {
-        this.ttsStop()
+      if (this.ttsPlaying) {
+        this.ttsPauseResume()
+        return
+      }
+      if (this.ttsPaused) {
+        this.ttsPauseResume()
         return
       }
       this.loadTtsSettings()
