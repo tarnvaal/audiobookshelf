@@ -203,11 +203,20 @@ export default {
     goToChapter(href) {
       if (!this.renderer) return
       this.initialPositioning = false
-      this.renderer.scrollToSection(href)
+      if (this.renderer.mode === 'paginated') {
+        // Find the section element and navigate to its page
+        const sectionEl = this.$refs.epubContent?.querySelector(`[data-href="${href}"]`)
+          || this.$refs.epubContent?.querySelector(`[data-href*="${href.split('#')[0]}"]`)
+        if (sectionEl) {
+          this.renderer.scrollToElement(sectionEl)
+        }
+      } else {
+        this.renderer.scrollToSection(href)
+      }
       this._onPositionChanged()
     },
     goToBookmark(cfi) {
-      if (!this.renderer) return
+      if (!this.renderer || !this.book) return
       this.initialPositioning = false
       this._scrollToCfi(cfi)
       this._onPositionChanged()
@@ -348,29 +357,27 @@ export default {
 
     _scrollToCfi(cfi) {
       if (!this.book || !this.renderer) return
-      // Parse the CFI to find which spine item and element
       try {
-        // Use book.spine to find the section from CFI
-        // CFI format: epubcfi(/6/<spinePos>!/...)
-        const match = cfi.match(/\/6\/(\d+)/)
-        if (!match) return
-        const spinePos = parseInt(match[1])
-        // epub CFI spine positions are 1-based and even-numbered
-        const spineIndex = (spinePos / 2) - 1
-
-        const sectionEl = this.$refs.epubContent?.querySelector(`[data-spine-index="${spineIndex}"]`)
-        if (sectionEl) {
-          // Try to find the exact element using the section's CFI resolver
-          const sectionData = this.renderer.getSection(spineIndex)
-          if (sectionData?.section?.document) {
-            // For now, scroll to the section start
-            this.renderer.scrollToElement(sectionEl)
-          } else {
-            this.renderer.scrollToElement(sectionEl)
-          }
-        }
+        // Get percentage from CFI and navigate to the corresponding page
+        const pct = this.book.locations?.percentageFromCfi?.(cfi) || 0
+        this._navigateToPercentage(pct)
       } catch (e) {
         console.warn('_scrollToCfi failed:', e)
+      }
+    },
+
+    _navigateToPercentage(pct) {
+      if (!this.renderer) return
+      if (this.renderer.mode === 'paginated') {
+        const targetPage = Math.round(pct * (this.renderer.totalPages - 1))
+        this.renderer.currentPage = Math.max(0, Math.min(targetPage, this.renderer.totalPages - 1))
+        this.renderer._applyPageTransform()
+      } else {
+        const container = this.$refs.epubContent
+        if (container) {
+          const targetScroll = pct * (container.scrollHeight - container.clientHeight)
+          container.scrollTo({ top: targetScroll })
+        }
       }
     },
 
@@ -496,16 +503,18 @@ export default {
     ttsSaveProgress(el) {
       if (!this.keepProgress || !el || !this.book || !this.renderer) return
       try {
-        const spineIndex = this.renderer.getSpineIndexForElement(el)
-        const sectionData = this.renderer.getSection(spineIndex)
-        if (!sectionData?.section) return
-        const cfi = sectionData.section.cfiFromElement(el)
-        if (!cfi) return
-        const pct = this.book.locations.percentageFromCfi(cfi)
-        this.updateProgress({
-          ebookLocation: cfi,
-          ebookProgress: pct || undefined
-        })
+        // Calculate position from the element's page offset
+        const pageWidth = this.renderer.container.clientWidth
+        const elPage = Math.floor(this.renderer._getElementPageOffset(el) / pageWidth)
+        const totalPages = this.renderer.totalPages
+        const pct = totalPages > 1 ? elPage / (totalPages - 1) : 0
+        const cfi = this.book.locations?.cfiFromPercentage?.(pct) || null
+        if (cfi) {
+          this.updateProgress({
+            ebookLocation: cfi,
+            ebookProgress: pct || undefined
+          })
+        }
       } catch (e) {
         console.error('ttsSaveProgress failed:', e)
       }
@@ -752,6 +761,19 @@ export default {
           // Keyboard navigation
           document.addEventListener('keydown', this.keyUp)
 
+          // Mouse wheel — page turn in paginated mode, natural scroll in continuous
+          let wheelCooldown = false
+          this._wheelHandler = (e) => {
+            if (reader.renderer.mode !== 'paginated') return
+            e.preventDefault()
+            if (wheelCooldown) return
+            wheelCooldown = true
+            setTimeout(() => { wheelCooldown = false }, 200)
+            if (e.deltaY > 0) this.next()
+            else if (e.deltaY < 0) this.prev()
+          }
+          container.addEventListener('wheel', this._wheelHandler, { passive: false })
+
           // Touch events
           container.addEventListener('touchstart', (e) => this.$emit('touchstart', e))
           container.addEventListener('touchend', (e) => this.$emit('touchend', e))
@@ -778,6 +800,9 @@ export default {
   beforeDestroy() {
     window.removeEventListener('resize', this.resize)
     document.removeEventListener('keydown', this.keyUp)
+    if (this._wheelHandler) {
+      this.$refs.epubContent?.removeEventListener('wheel', this._wheelHandler)
+    }
     this.ttsRemoveClickHandlers()
     if (this.renderer) {
       this.renderer.destroy()
