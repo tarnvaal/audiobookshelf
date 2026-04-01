@@ -548,14 +548,17 @@ class Server {
         }
 
         const topWords = (fp.distinctiveWords || []).slice(0, 15).map(w => w.word).join(', ')
-        prompt = `You are a literary critic with deep knowledge of genre fiction. Read the following substantial excerpt from "${fp.title}" by ${fp.author} and write a thorough analysis (3-4 paragraphs) covering:
+        prompt = `You are a literary critic. Read the following excerpt from "${fp.title}" by ${fp.author} and write a thorough analysis in 3-4 plain text paragraphs. Do NOT use markdown, headers, bold, italic, bullet points, or numbered lists. Write in flowing prose only.
 
-1. SETTING & PREMISE: What world is this? What's the central conflict or question driving the narrative? Be specific about the setting details you find in the text.
-2. PROSE & STYLE: How does the author write? Is it dense, spare, ornate, conversational? How does the sentence structure feel? What's distinctive about the voice?
-3. THEMES & TONE: What ideas is the book wrestling with? What's the emotional register — bleak, hopeful, sardonic, reverent? Give specific examples from the text.
-4. COMPARABLE WORKS & AUDIENCE: Who is this for? What other books does it remind you of, and be specific about WHY (don't just name-drop). What kind of reader would love this vs. bounce off it?
+Paragraph 1 — SETTING & PREMISE: What world is this? What's the central conflict or question? Be specific about setting details from the text.
 
-Do not summarize the plot. Do not spoil. Write as a thoughtful critic, not a marketing blurb. Be specific — reference actual passages, character names, and stylistic choices you observe in the text.
+Paragraph 2 — PROSE & STYLE: How does the author write? Dense, spare, ornate, conversational? What's distinctive about the voice? Reference specific passages.
+
+Paragraph 3 — THEMES & TONE: What ideas is the book wrestling with? What's the emotional register? Give examples from the text.
+
+Paragraph 4 — CONTENT & INTENSITY: How graphic is the violence, sexuality, or dark subject matter? What content should a reader be prepared for? Be specific about what's in the text without moralizing.
+
+Do not summarize the plot. Do not spoil. Do not use markdown formatting of any kind — no asterisks, no headers, no bold, no italic. Plain text paragraphs only.
 
 Distinctive vocabulary: ${topWords}
 Stats: ${fp.totalWords} total words, ${Math.round(fp.dialogueRatio * 100)}% dialogue, vocab density ${fp.vocabDensity}
@@ -593,7 +596,13 @@ ${excerptText}`
         }, { timeout: 600000 })
 
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-        const summary = resp.data?.message?.content || ''
+        let summary = resp.data?.message?.content || ''
+        // Strip markdown formatting that LLMs love to insert
+        summary = summary.replace(/\*\*([^*]+)\*\*/g, '$1')  // **bold**
+          .replace(/\*([^*]+)\*/g, '$1')   // *italic*
+          .replace(/^#+\s+/gm, '')          // ## headers
+          .replace(/^[-*]\s+/gm, '')        // - bullet points
+          .replace(/^\d+\.\s+/gm, '')       // 1. numbered lists
         Logger.info(`[Fingerprint] Summary generated in ${elapsed}s (${summary.split(/\s+/).length} words output)`)
 
         fp.styleSummary = summary.trim()
