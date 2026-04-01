@@ -299,11 +299,13 @@ export default class EpubRenderer {
   }
 
   _getVisibleTextPaginated() {
-    // Approximate: get all text from rendered sections
-    // (in paginated mode, CSS columns handle visibility)
+    const containerRect = this.container.getBoundingClientRect()
     const els = this.container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote')
     const texts = []
     els.forEach((el) => {
+      const rect = el.getBoundingClientRect()
+      if (rect.right <= containerRect.left || rect.left >= containerRect.right) return
+      if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) return
       const text = (el.innerText || el.textContent || '').trim()
       if (text) texts.push(text)
     })
@@ -336,8 +338,18 @@ export default class EpubRenderer {
     for (let i = 0; i < paragraphs.length; i++) {
       const el = paragraphs[i].el
       const rect = el.getBoundingClientRect()
-      if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
-        return i
+      if (this.mode === 'paginated') {
+        // In paginated mode, check both vertical and horizontal visibility.
+        // translateX shifts elements — only elements within the container's
+        // left/right bounds are on the current page.
+        if (rect.right > containerRect.left && rect.left < containerRect.right &&
+            rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+          return i
+        }
+      } else {
+        if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+          return i
+        }
       }
     }
     return 0
