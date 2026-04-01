@@ -56,6 +56,9 @@
       <div class="w-full h-0.5 bg-gray-700">
         <div class="h-full bg-blue-500/60 transition-all duration-300" :style="{ width: Math.round(readingStatus.percentage * 100) + '%' }"></div>
       </div>
+      <div v-if="readingStatus.chapterProgress != null" class="w-full h-0.5 bg-gray-700/50">
+        <div class="h-full bg-amber-500/60 transition-all duration-300" :style="{ width: Math.round(readingStatus.chapterProgress * 100) + '%' }"></div>
+      </div>
       <div class="flex items-center justify-between px-4 py-1.5 text-xs">
         <span v-if="readingStatus.chapter" class="truncate max-w-[40%]">{{ readingStatus.chapter }}</span>
         <span v-else></span>
@@ -129,6 +132,7 @@
             <div class="flex-1 min-w-0">
               <p class="text-sm truncate">{{ bm.label }}</p>
               <p class="text-xs opacity-50">{{ Math.round(bm.percentage * 100) }}%</p>
+              <p v-if="bm.preview" class="text-xs opacity-40 mt-0.5 italic" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ bm.preview }}</p>
             </div>
             <button @click.stop="removeBookmark(bm.cfi)" class="ml-2 opacity-50 hover:opacity-100 shrink-0">
               <span class="material-symbols text-sm">delete</span>
