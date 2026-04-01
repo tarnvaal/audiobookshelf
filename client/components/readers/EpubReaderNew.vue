@@ -762,15 +762,19 @@ export default {
           document.addEventListener('keydown', this.keyUp)
 
           // Mouse wheel — page turn in paginated mode, natural scroll in continuous
-          let wheelCooldown = false
+          let wheelAccum = 0
+          let wheelTimer = null
           this._wheelHandler = (e) => {
             if (reader.renderer.mode !== 'paginated') return
             e.preventDefault()
-            if (wheelCooldown) return
-            wheelCooldown = true
-            setTimeout(() => { wheelCooldown = false }, 200)
-            if (e.deltaY > 0) this.next()
-            else if (e.deltaY < 0) this.prev()
+            wheelAccum += e.deltaY
+            if (wheelTimer) return
+            wheelTimer = setTimeout(() => {
+              if (wheelAccum > 0) this.next()
+              else if (wheelAccum < 0) this.prev()
+              wheelAccum = 0
+              wheelTimer = null
+            }, 100)
           }
           container.addEventListener('wheel', this._wheelHandler, { passive: false })
 
