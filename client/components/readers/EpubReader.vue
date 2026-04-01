@@ -598,12 +598,33 @@ export default {
     resize() {
       this.windowWidth = window.innerWidth
       this.windowHeight = window.innerHeight
-      // Use actual container width for rendition sizing
       const el = document.getElementById('epub-reader')
       const width = el ? el.clientWidth : this.readerWidth
       const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
-      this.rendition?.resize(Math.round(width * widthPct), this.readerHeight * 0.8)
-      // Notify parent so TTS can refresh after reflow
+      const newWidth = Math.round(width * widthPct)
+      const newHeight = this.readerHeight * 0.8
+
+      const mgr = this.rendition?.manager
+      if (mgr && mgr.name === 'continuous' && typeof mgr.check === 'function' && mgr.check.toString().includes('resolve(false)')) {
+        // Patched continuous manager — resize container and views directly
+        // to avoid triggering epub.js internals that break on patched views
+        if (mgr.container) {
+          mgr.container.style.width = newWidth + 'px'
+          mgr.container.style.height = newHeight + 'px'
+        }
+        const views = mgr.views
+        if (views && typeof views.forEach === 'function') {
+          views.forEach((view) => {
+            if (view.element) {
+              view.element.style.width = newWidth + 'px'
+            }
+          })
+        }
+        mgr.width = newWidth
+        mgr.height = newHeight
+      } else if (this.rendition) {
+        this.rendition.resize(newWidth, newHeight)
+      }
       this.$emit('reflowed')
     },
     loadBookmarks() {
