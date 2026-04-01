@@ -90,9 +90,7 @@ export default class EpubRenderer {
 
     const wrapper = document.createElement('div')
     wrapper.className = 'epub-pages'
-    wrapper.style.columnWidth = `${this.container.clientWidth}px`
     wrapper.style.columnGap = '0px'
-    wrapper.style.height = `${this.container.clientHeight}px`
     wrapper.style.overflow = 'hidden'
 
     for (const data of this.loadedSections) {
@@ -110,8 +108,27 @@ export default class EpubRenderer {
     this.container.appendChild(wrapper)
     this._wrapper = wrapper
 
-    // Calculate total pages after DOM is built
-    this._recalcPages()
+    // Defer column sizing until the container has dimensions
+    this._applyPaginatedLayout()
+  }
+
+  /**
+   * Apply column sizing for paginated layout.
+   * Called after DOM is built and whenever container resizes.
+   */
+  _applyPaginatedLayout() {
+    if (!this._wrapper) return
+    const w = this.container.clientWidth
+    const h = this.container.clientHeight
+    console.log('[EpubRenderer] Paginated layout:', w, 'x', h)
+    if (w > 0 && h > 0) {
+      this._wrapper.style.columnWidth = `${w}px`
+      this._wrapper.style.height = `${h}px`
+      this._recalcPages()
+    } else {
+      // Container not laid out yet — retry on next frame
+      requestAnimationFrame(() => this._applyPaginatedLayout())
+    }
   }
 
   /**
@@ -210,9 +227,7 @@ export default class EpubRenderer {
     if (height) this.container.style.height = `${height}px`
 
     if (this.mode === 'paginated' && this._wrapper) {
-      this._wrapper.style.columnWidth = `${this.container.clientWidth}px`
-      this._wrapper.style.height = `${this.container.clientHeight}px`
-      this._recalcPages()
+      this._applyPaginatedLayout()
       // Clamp current page
       if (this.currentPage >= this.totalPages) {
         this.currentPage = Math.max(0, this.totalPages - 1)
