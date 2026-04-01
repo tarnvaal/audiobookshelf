@@ -143,9 +143,15 @@
             </div>
             <div v-if="bookFingerprint">
               <p v-if="bookFingerprint.styleSummary" class="text-sm text-gray-300 mb-3">{{ bookFingerprint.styleSummary }}</p>
-              <div v-else class="mb-3">
+              <div class="flex items-center gap-2 mb-3">
+                <select v-model="summaryModel" class="text-xs bg-primary border border-gray-600/40 rounded px-2 py-1">
+                  <option v-for="m in ollamaModels" :key="m" :value="m">{{ m }}</option>
+                </select>
                 <button @click="generateSummary" class="text-xs px-2 py-1 rounded border border-blue-500/40 hover:bg-blue-500/20" :disabled="summaryLoading">
-                  {{ summaryLoading ? 'Generating...' : 'Generate style summary' }}
+                  {{ summaryLoading ? 'Generating...' : (bookFingerprint.styleSummary ? 'Regenerate' : 'Generate summary') }}
+                </button>
+                <button v-if="summaryLoading" @click="cancelSummary" class="text-xs px-2 py-1 rounded border border-red-500/40 hover:bg-red-500/20">
+                  Cancel
                 </button>
               </div>
 
@@ -175,14 +181,10 @@
                 </div>
               </div>
 
-              <div class="flex items-center gap-2 mt-3">
-                <button v-if="bookFingerprint.styleSummary" @click="generateSummary" class="text-xs px-2 py-1 rounded border border-gray-600/40 hover:bg-gray-600/20" :disabled="summaryLoading">
-                  {{ summaryLoading ? 'Regenerating...' : 'Regenerate summary' }}
-                </button>
-                <div v-if="bookFingerprint.styleSummary" class="flex items-center gap-1 text-xs opacity-50">
-                  <span>Rating:</span>
-                  <button v-for="n in 5" :key="n" @click="rateFingerprint(n)" class="hover:text-yellow-400" :class="n <= (bookFingerprint.styleSummaryRating || 0) ? 'text-yellow-400' : 'text-gray-500'">&#9733;</button>
-                </div>
+              <div v-if="bookFingerprint.styleSummary" class="flex items-center gap-1 mt-2 text-xs opacity-50">
+                <span>Rating:</span>
+                <button v-for="n in 5" :key="n" @click="rateFingerprint(n)" class="hover:text-yellow-400" :class="n <= (bookFingerprint.styleSummaryRating || 0) ? 'text-yellow-400' : 'text-gray-500'">&#9733;</button>
+                <span v-if="bookFingerprint.styleSummaryModel" class="ml-2 opacity-60">via {{ bookFingerprint.styleSummaryModel }}</span>
               </div>
             </div>
           </div>
@@ -245,6 +247,9 @@ export default {
       bookFingerprint: null,
       fingerprintLoading: false,
       summaryLoading: false,
+      summaryAbort: null,
+      summaryModel: '',
+      ollamaModels: [],
       similarBooks: []
     }
   },
@@ -523,18 +528,42 @@ export default {
       }
       this.fingerprintLoading = false
     },
-    async generateSummary() {
-      this.summaryLoading = true
+    async loadOllamaModels() {
       try {
-        const resp = await this.$axios.$post(`/api/items/${this.libraryItemId}/fingerprint/summary`, {
-          model: 'impish-bloodmoon'
-        })
-        if (this.bookFingerprint) {
-          this.bookFingerprint.styleSummary = resp.styleSummary
+        const resp = await this.$axios.$get('/api/ollama/tags')
+        this.ollamaModels = (resp.models || []).map(m => m.name)
+        if (this.ollamaModels.length && !this.summaryModel) {
+          this.summaryModel = this.bookFingerprint?.styleSummaryModel || this.ollamaModels[0]
         }
       } catch (e) {
-        console.error('Summary generation failed:', e)
-        this.$toast.error('Summary failed: ' + (e.response?.data?.error || e.message))
+        this.ollamaModels = []
+      }
+    },
+    async generateSummary() {
+      if (!this.summaryModel) return
+      this.summaryLoading = true
+      const controller = new AbortController()
+      this.summaryAbort = controller
+      try {
+        const resp = await this.$axios.$post(`/api/items/${this.libraryItemId}/fingerprint/summary`, {
+          model: this.summaryModel
+        }, { signal: controller.signal })
+        if (this.bookFingerprint) {
+          this.bookFingerprint.styleSummary = resp.styleSummary
+          this.bookFingerprint.styleSummaryModel = resp.model
+        }
+      } catch (e) {
+        if (e.message !== 'canceled') {
+          this.$toast.error('Summary failed: ' + (e.response?.data?.error || e.message))
+        }
+      }
+      this.summaryLoading = false
+      this.summaryAbort = null
+    },
+    cancelSummary() {
+      if (this.summaryAbort) {
+        this.summaryAbort.abort()
+        this.summaryAbort = null
       }
       this.summaryLoading = false
     },
@@ -910,7 +939,10 @@ export default {
   },
   mounted() {
     this.checkDescriptionClamped()
-    if (this.isBook) this.loadFingerprint()
+    if (this.isBook) {
+      this.loadFingerprint()
+      this.loadOllamaModels()
+    }
 
     this.episodeDownloadsQueued = this.libraryItem.episodeDownloadsQueued || []
     this.episodesDownloading = this.libraryItem.episodesDownloading || []
