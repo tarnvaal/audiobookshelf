@@ -603,6 +603,8 @@ export default {
       const width = el ? el.clientWidth : this.readerWidth
       const widthPct = (this.ereaderSettings.maxWidth || 70) / 100
       this.rendition?.resize(Math.round(width * widthPct), this.readerHeight * 0.8)
+      // Notify parent so TTS can refresh after reflow
+      this.$emit('reflowed')
     },
     loadBookmarks() {
       try {
