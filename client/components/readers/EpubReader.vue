@@ -704,7 +704,7 @@ export default {
         const els = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote')
         els.forEach((el) => {
           const text = (el.innerText || el.textContent || '').trim()
-          if (text.length > 0) {
+          if (text.length > 0 && /[a-zA-Z0-9]/.test(text)) {
             paragraphs.push({ el, text })
           }
         })
