@@ -5,7 +5,7 @@
         <span v-if="hasPrev" class="material-symbols text-6xl" @mousedown.prevent @click="prev">chevron_left</span>
       </button>
       <div id="frame" class="w-full" style="height: 80%">
-        <div id="epub-content" ref="epubContent"></div>
+        <div id="epub-content" ref="epubContent" style="width: 100%; height: 100%; overflow: auto; position: relative;"></div>
       </div>
       <button type="button" aria-label="Next page" class="w-24 max-w-24 h-full hidden sm:flex items-center justify-center overflow-x-hidden opacity-50 hover:opacity-100">
         <span v-if="hasNext" class="material-symbols text-6xl" @mousedown.prevent @click="next">chevron_right</span>
@@ -723,8 +723,6 @@ export default {
           // Create renderer
           const isContinuous = this.ereaderSettings.spread === 'continuous'
           const container = this.$refs.epubContent
-          container.style.width = '100%'
-          container.style.height = '100%'
 
           reader.renderer = new EpubRenderer(container, reader.book, {
             mode: isContinuous ? 'continuous' : 'paginated',
@@ -732,7 +730,9 @@ export default {
           })
 
           // Render content
+          console.log('[EpubReaderNew] Rendering with custom renderer, mode:', reader.renderer.mode)
           await reader.renderer.render()
+          console.log('[EpubReaderNew] Rendered', reader.renderer.loadedSections.length, 'sections')
 
           // Apply theme and settings
           this._applySettings(this.ereaderSettings)
