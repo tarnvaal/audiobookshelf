@@ -496,7 +496,10 @@ export default {
       }
     },
     componentName() {
-      if (this.ebookType === 'epub') return 'readers-epub-reader'
+      if (this.ebookType === 'epub') {
+        const useNew = localStorage.getItem('useCustomRenderer') === 'true'
+        return useNew ? 'readers-epub-reader-new' : 'readers-epub-reader'
+      }
       else if (this.ebookType === 'mobi') return 'readers-mobi-reader'
       else if (this.ebookType === 'pdf') return 'readers-pdf-reader'
       else if (this.ebookType === 'comic') return 'readers-comic-reader'
