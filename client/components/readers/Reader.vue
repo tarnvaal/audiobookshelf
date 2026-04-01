@@ -1030,7 +1030,6 @@ export default {
 
       if (reader && para.el) {
         reader.ttsHighlight(para.el)
-        reader.ttsSaveProgress(para.el)
       }
 
       const audio = await this.ttsGetAudio(this.ttsCurrentIndex)
@@ -1047,6 +1046,10 @@ export default {
       this.ttsAudio.onended = async () => {
         URL.revokeObjectURL(audio.url)
         if (!this.ttsPlaying) return
+        // Save progress after paragraph fully plays — bookmark is last completed paragraph
+        if (reader && para.el) {
+          reader.ttsSaveProgress(para.el)
+        }
         this.ttsCurrentIndex++
         if (this.ttsCurrentIndex >= this.ttsParagraphs.length) {
           const advanced = await this.ttsAdvancePage()
