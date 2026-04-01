@@ -227,9 +227,23 @@ export default class EpubRenderer {
       this.container.scrollTo({ top: targetScroll, behavior: 'smooth' })
     } else if (this._wrapper) {
       const pageWidth = this.container.clientWidth
-      this.currentPage = Math.floor(el.offsetLeft / pageWidth)
+      this.currentPage = Math.floor(this._getElementPageOffset(el) / pageWidth)
       this._applyPageTransform()
     }
+  }
+
+  /**
+   * Get an element's horizontal offset relative to the wrapper,
+   * accounting for nested offsetParents in CSS columns.
+   */
+  _getElementPageOffset(el) {
+    let left = el.offsetLeft
+    let parent = el.offsetParent
+    while (parent && parent !== this.container && parent !== this._wrapper) {
+      left += parent.offsetLeft
+      parent = parent.offsetParent
+    }
+    return left
   }
 
   /**
@@ -299,13 +313,12 @@ export default class EpubRenderer {
   }
 
   _getVisibleTextPaginated() {
-    const containerRect = this.container.getBoundingClientRect()
+    const pageWidth = this.container.clientWidth
     const els = this.container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote')
     const texts = []
     els.forEach((el) => {
-      const rect = el.getBoundingClientRect()
-      if (rect.right <= containerRect.left || rect.left >= containerRect.right) return
-      if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) return
+      const elPage = Math.floor(this._getElementPageOffset(el) / pageWidth)
+      if (elPage !== this.currentPage) return
       const text = (el.innerText || el.textContent || '').trim()
       if (text) texts.push(text)
     })
@@ -333,23 +346,42 @@ export default class EpubRenderer {
    */
   getFirstVisibleParagraphIndex(paragraphs) {
     if (!paragraphs.length) return 0
+
+    if (this.mode === 'paginated') {
+      return this._getFirstVisibleParagraphPaginated(paragraphs)
+    }
+
     const containerRect = this.container.getBoundingClientRect()
+    for (let i = 0; i < paragraphs.length; i++) {
+      const rect = paragraphs[i].el.getBoundingClientRect()
+      if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+        return i
+      }
+    }
+    return 0
+  }
+
+  /**
+   * In paginated mode, getBoundingClientRect doesn't reflect the translateX
+   * on the wrapper. Instead, determine which page an element is on via its
+   * offsetLeft relative to the page width, then compare to currentPage.
+   */
+  _getFirstVisibleParagraphPaginated(paragraphs) {
+    const pageWidth = this.container.clientWidth
+    if (pageWidth <= 0) return 0
 
     for (let i = 0; i < paragraphs.length; i++) {
       const el = paragraphs[i].el
-      const rect = el.getBoundingClientRect()
-      if (this.mode === 'paginated') {
-        // In paginated mode, check both vertical and horizontal visibility.
-        // translateX shifts elements — only elements within the container's
-        // left/right bounds are on the current page.
-        if (rect.right > containerRect.left && rect.left < containerRect.right &&
-            rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
-          return i
-        }
-      } else {
-        if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
-          return i
-        }
+      // Walk up to find offset relative to the wrapper
+      let left = el.offsetLeft
+      let parent = el.offsetParent
+      while (parent && parent !== this.container && parent !== this._wrapper) {
+        left += parent.offsetLeft
+        parent = parent.offsetParent
+      }
+      const elPage = Math.floor(left / pageWidth)
+      if (elPage === this.currentPage) {
+        return i
       }
     }
     return 0
