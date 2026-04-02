@@ -27,7 +27,7 @@ module.exports = {
     htmlAttrs: {
       lang: 'en'
     },
-    meta: [{ charset: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1' }, { hid: 'description', name: 'description', content: '' }, { hid: 'robots', name: 'robots', content: 'noindex' }],
+    meta: [{ charset: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' }, { hid: 'description', name: 'description', content: '' }, { hid: 'robots', name: 'robots', content: 'noindex' }, { hid: 'theme-color', name: 'theme-color', content: '#232323' }],
     script: [],
     link: [
       { rel: 'icon', type: 'image/x-icon', href: routerBasePath + '/favicon.ico' },
@@ -81,7 +81,7 @@ module.exports = {
   pwa: {
     icon: false,
     meta: {
-      appleStatusBarStyle: 'black',
+      appleStatusBarStyle: 'black-translucent',
       name: 'Audiobookshelf',
       theme_color: '#232323',
       mobileAppIOS: true,
